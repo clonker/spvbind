@@ -1,0 +1,14 @@
+name = "spvbind"
+version = "0.1.0"
+defaultTargets = ["spvbind"]
+
+[leanOptions]
+autoImplicit = false
+relaxedAutoImplicit = false
+
+[[lean_lib]]
+name = "Spvbind"
+
+[[lean_exe]]
+name = "spvbind"
+root = "Main"
