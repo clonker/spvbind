@@ -10,6 +10,9 @@ Typed C++ interfaces for Vulkan shaders generated from SPIR-V.
 | `Spvbind` | The implementation; the `spvbind` executable is `Main.lean`                     | `Spec`, for its types |
 | `Proofs`  | Theorems relating `Spvbind` to `Spec`                                           | Both                  |
 
+Besides `Spec`, only `Guarantees.lean` needs review: it restates the theorems that matter, proven in `Proofs`, and
+the build fails if they depend on anything but Lean's standard axioms (no `sorry`, `native_decide` or `bv_decide`).
+
 ## Specifications
 
 | Specification                                                           | Version         | Used in            |

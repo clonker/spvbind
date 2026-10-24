@@ -1,6 +1,6 @@
 name = "spvbind"
 version = "0.1.0"
-defaultTargets = ["spvbind", "Proofs"]
+defaultTargets = ["spvbind", "Guarantees"]
 
 [leanOptions]
 autoImplicit = false
@@ -17,6 +17,10 @@ name = "Spvbind"
 # Theorems relating Spvbind to Spec.
 [[lean_lib]]
 name = "Proofs"
+
+# The theorems that need review, restated from Proofs, with their axioms checked.
+[[lean_lib]]
+name = "Guarantees"
 
 [[lean_exe]]
 name = "spvbind"
