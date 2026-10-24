@@ -1,5 +1,5 @@
 /-!
-# The SPIR-V binary format: words and header
+# The SPIR-V binary format: words, header and literal strings
 
 SPIR-V specification, version 1.6, revision 8 (https://registry.khronos.org/SPIR-V/specs/unified1/SPIRV.html):
 2.2 Terms, 2.3 Physical Layout of a SPIR-V Module and Instruction, 3.1 Magic Number.
@@ -12,6 +12,9 @@ abbrev Word := UInt32
 
 /-- Technically not one of the terms in 2.2 -/
 abbrev Byte := UInt8
+
+/-- 2.2 Terms: an <id> is a numerical name, and always consumes one word. -/
+abbrev Id := Word
 
 /-- Magic Number (3.1) -/
 def magic : Word := 0x07230203
@@ -36,5 +39,29 @@ def Header.major (h : Header) : Byte := (h.version >>> 16).toUInt8
 
 /-- The second-lowest byte of the version number (2.3, Table 1). -/
 def Header.minor (h : Header) : Byte := (h.version >>> 8).toUInt8
+
+/-- Four octets as a word, the first in the lowest-order 8 bits (2.2.1, Literal). -/
+def wordOfOctets (b0 b1 b2 b3 : Byte) : Word :=
+  b0.toUInt32 ||| b1.toUInt32 <<< 8 ||| b2.toUInt32 <<< 16 ||| b3.toUInt32 <<< 24
+
+/-- Octets "packed four per word", the final word padded with 0 (2.2.1, Literal). -/
+def packOctets : List Byte → List Word
+  | b0 :: b1 :: b2 :: b3 :: rest => wordOfOctets b0 b1 b2 b3 :: packOctets rest
+  | [b0, b1, b2] => [wordOfOctets b0 b1 b2 0]
+  | [b0, b1] => [wordOfOctets b0 b1 0 0]
+  | [b0] => [wordOfOctets b0 0 0 0]
+  | [] => []
+
+/-- A string literal (2.2.1, Literal): "a nul-terminated stream of characters", in "Unicode in the UTF-8 encoding
+scheme". -/
+structure LiteralString where
+  value : String
+  /-- None of its UTF-8 octets is the nul-termination character. -/
+  noNul : 0 ∉ value.toUTF8.data.toList
+
+/-- 2.2.1, Literal: "The final word contains the string's nul-termination character (0), and all contents past the
+end of the string in the final word are padded with 0." -/
+def LiteralString.words (s : LiteralString) : List Word :=
+  packOctets (s.value.toUTF8.data.toList ++ [0])
 
 end Spec

@@ -1,7 +1,7 @@
 import Spec.Binary
 
 /-!
-# Decoding words and the header of a module
+# Decoding the words and the header of a module
 -/
 
 namespace Spvbind
@@ -37,5 +37,12 @@ def decodeHeader : List Word → Except String (Header × List Word)
     else if schema ≠ 0 then throw s!"unknown schema {schema}"
     else return ({ version, generator, bound }, rest)
   | ws => throw s!"{ws.length} words is shorter than the header"
+
+/-- spvbind reads modules from SPIR-V 1.4 on, whose entry points list every global variable they use, in every
+storage class (3.3, `OpEntryPoint`). -/
+def checkVersion (h : Header) : Except String Unit :=
+  if h.major < 1 ∨ (h.major = 1 ∧ h.minor < 4) then
+    throw s!"SPIR-V {h.major}.{h.minor} is not supported, only 1.4 and later"
+  else pure ()
 
 end Spvbind
