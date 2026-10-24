@@ -1,56 +1,41 @@
-/-!
-# The SPIR-V binary format: words and header
+import Spec.Binary
 
-A module is a stream of 32-bit words in either byte order, detected from the magic number; the header is the first
-five words, followed by the instructions (SPIR-V specification, 2.3 Physical Layout of a SPIR-V Module).
+/-!
+# Decoding words and the header of a module
 -/
 
 namespace Spvbind
 
-def magic : UInt32 := 0x07230203
+open Spec (Word Byte magic Header)
 
-def UInt32.byteSwap (w : UInt32) : UInt32 :=
-  (w >>> 24) ||| ((w >>> 8) &&& (0xff00 : UInt32)) ||| ((w <<< 8) &&& (0xff0000 : UInt32)) ||| (w <<< 24)
+/-- The word with its four bytes in reverse order. -/
+def byteReverse (w : Word) : Word :=
+  (w >>> 24) ||| ((w >>> 8) &&& (0xff00 : Word)) ||| ((w <<< 8) &&& (0xff0000 : Word)) ||| (w <<< 24)
 
-/-- The little-endian 32-bit words of `bytes`, if its size is a multiple of 4. -/
-def littleEndianWords (bytes : ByteArray) : Option (Array UInt32) :=
+/-- The little-endian words of `bytes`, if its size is a multiple of 4. -/
+def littleEndianWords (bytes : ByteArray) : Option (Array Word) :=
   if bytes.size % 4 = 0 then
     some <| Array.ofFn fun (i : Fin (bytes.size / 4)) =>
-      let byte (k : Nat) (_ : k < 4) : UInt32 := (bytes[4 * i.val + k]'(by have := i.isLt; omega)).toUInt32
-      byte 0 (by decide) ||| byte 1 (by decide) <<< 8 ||| byte 2 (by decide) <<< 16 ||| byte 3 (by decide) <<< 24
+      let byte (k : Fin 4) : Word := (bytes[4 * i.val + k.val]'(by omega) : Byte).toUInt32
+      byte 0 ||| byte 1 <<< 8 ||| byte 2 <<< 16 ||| byte 3 <<< 24
   else
     none
 
-/-- The words of a module, in the byte order its magic number is in. -/
-def words (bytes : ByteArray) : Except String (Array UInt32) := do
+/-- The words of a module stored as bytes, in the byte order its magic number is in. A module is a stream of words,
+not of bytes; how to store it is only a tip (3.1, Endianness). Whether there is a magic number at all is left to
+`decodeHeader`. -/
+def words (bytes : ByteArray) : Except String (List Word) := do
   let some ws := littleEndianWords bytes
     | throw s!"size {bytes.size} is not a multiple of 4"
-  match ws[0]? with
-  | some w =>
-    if w = magic then return ws
-    else if w = UInt32.byteSwap magic then return ws.map UInt32.byteSwap
-    else throw "no SPIR-V magic number"
-  | none => throw "empty"
+  if ws[0]? = some (byteReverse magic) then return (ws.map byteReverse).toList
+  else return ws.toList
 
-structure Header where
-  /-- `0 | major | minor | 0`, from the most to the least significant byte. -/
-  version : UInt32
-  generator : UInt32
-  /-- Every result id is less than the bound. -/
-  bound : UInt32
-  deriving Repr, DecidableEq
-
-def Header.major (h : Header) : UInt32 := (h.version >>> 16) &&& (0xff : UInt32)
-
-def Header.minor (h : Header) : UInt32 := (h.version >>> 8) &&& (0xff : UInt32)
-
-/-- The header and the index of the first instruction word. -/
-def Header.decode (ws : Array UInt32) : Except String (Header × Nat) :=
-  match ws[0]?, ws[1]?, ws[2]?, ws[3]?, ws[4]? with
-  | some m, some version, some generator, some bound, some schema =>
+/-- The header and the words after it. -/
+def decodeHeader : List Word → Except String (Header × List Word)
+  | m :: version :: generator :: bound :: schema :: rest =>
     if m ≠ magic then throw "no SPIR-V magic number"
     else if schema ≠ 0 then throw s!"unknown schema {schema}"
-    else return ({ version, generator, bound }, 5)
-  | _, _, _, _, _ => throw s!"{ws.size} words is shorter than the header"
+    else return ({ version, generator, bound }, rest)
+  | ws => throw s!"{ws.length} words is shorter than the header"
 
 end Spvbind

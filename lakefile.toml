@@ -1,13 +1,22 @@
 name = "spvbind"
 version = "0.1.0"
-defaultTargets = ["spvbind"]
+defaultTargets = ["spvbind", "Proofs"]
 
 [leanOptions]
 autoImplicit = false
 relaxedAutoImplicit = false
 
+# Definitions transcribed from the specifications; imports nothing else from this package.
+[[lean_lib]]
+name = "Spec"
+
+# The implementation; may import Spec for its types, never Proofs.
 [[lean_lib]]
 name = "Spvbind"
+
+# Theorems relating Spvbind to Spec.
+[[lean_lib]]
+name = "Proofs"
 
 [[lean_exe]]
 name = "spvbind"
