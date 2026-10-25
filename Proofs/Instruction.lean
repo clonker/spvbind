@@ -198,9 +198,7 @@ theorem decodeInstructions_words (is : List Instruction) (hf : ∀ i ∈ is, i.F
     rw [decodeInstructions]
     simp only [hc, ho, hn]
     simp [hop, hrest]
-    split
-    · omega
-    · rfl
+    rfl
 
 theorem words_of_decodeInstructions (ws : List Word) (is : List Instruction)
     (h : decodeInstructions ws = .ok is) : ws = is.flatMap Instruction.words ∧ ∀ i ∈ is, i.Fits := by
@@ -218,7 +216,7 @@ theorem words_of_decodeInstructions (ws : List Word) (is : List Instruction)
       obtain ⟨hws, hfs⟩ := ih r hr
       obtain ⟨he, hops⟩ := (decodeOperands_eq_ok _ _ _).mp hop
       have hcount : i.operands.length + 1 = (w >>> 16).toNat := by
-        rw [hops]; simp only [List.length_take]; omega
+        rw [hops]; simp only [List.length_take] at hlen ⊢; omega
       have hfirst : (i.operands.length + 1).toUInt32 <<< 16 ||| i.enumerant.toUInt32 = w := by
         rw [hcount, he, Nat.toUInt32_eq, UInt32.ofNat_toNat, join_high_low]
       refine ⟨?_, ?_⟩

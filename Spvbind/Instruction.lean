@@ -49,12 +49,13 @@ def decodeOperands (e : UInt16) (ops : List Word) : Except String Instruction :=
   else if h : e ∈ modelled then .error s!"opcode enumerant {e} is modelled but not decoded"
   else .ok (.other e ops h)
 
-/-- The instructions a stream of words consists of. -/
+/-- The instructions a stream of words consists of. The words left are not counted, which would take time quadratic in
+the size of the module; only the operands taken are. -/
 def decodeInstructions : List Word → Except String (List Instruction)
   | [] => .ok []
   | w :: ws =>
     if (w >>> 16).toNat = 0 then .error s!"instruction with opcode enumerant {w.toUInt16} has word count 0"
-    else if ws.length < (w >>> 16).toNat - 1 then
+    else if (ws.take ((w >>> 16).toNat - 1)).length < (w >>> 16).toNat - 1 then
       .error s!"instruction with opcode enumerant {w.toUInt16} has word count {(w >>> 16).toNat}, past the end of \
         the module"
     else
