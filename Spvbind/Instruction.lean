@@ -7,7 +7,8 @@ import Spvbind.Binary
 
 namespace Spvbind
 
-open Spec (Word Byte LiteralString OpName OpMemberName modelled Instruction Module)
+open Spec (Word Byte LiteralString Offset modelledDecorations Decoration OpName OpMemberName OpTypeInt OpTypeFloat
+  OpTypeStruct OpTypePointer OpVariable OpMemberDecorate modelled Instruction Module)
 
 /-- The four octets of a word, the first from the lowest-order 8 bits. -/
 def octets (w : Word) : List Byte :=
@@ -28,6 +29,17 @@ def decodeString (ws : List Word) : Except String (LiteralString × List Word) :
     else .error "literal string not padded with 0"
   else .error "literal string is not valid UTF-8"
 
+/-- The decoration a decoration's enumerant and extra operands encode. -/
+def decodeDecoration : List Word → Except String Decoration
+  | [] => .error "decoration without enumerant"
+  | e :: ops =>
+    if e = Offset then
+      match ops with
+      | [byteOffset] => .ok (.offset byteOffset)
+      | _ => .error "Offset decoration without exactly one operand"
+    else if h : e ∈ modelledDecorations then .error s!"decoration {e} is modelled but not decoded"
+    else .ok (.other e ops h)
+
 /-- The instruction with opcode enumerant `e` and operands `ops`. -/
 def decodeOperands (e : UInt16) (ops : List Word) : Except String Instruction :=
   if e = OpName then
@@ -46,6 +58,34 @@ def decodeOperands (e : UInt16) (ops : List Word) : Except String Instruction :=
       | .ok (_, _ :: _) => .error "OpMemberName has operands after its name"
       | .error e => .error e
     | _ => .error "OpMemberName with fewer than three operands"
+  else if e = OpTypeInt then
+    match ops with
+    | [result, width, signedness] => .ok (.typeInt result width signedness)
+    | _ => .error "OpTypeInt without exactly three operands"
+  else if e = OpTypeFloat then
+    match ops with
+    | [result, width] => .ok (.typeFloat result width)
+    | _ => .error "OpTypeFloat without exactly two operands; the Floating Point Encoding operand is not supported"
+  else if e = OpTypeStruct then
+    match ops with
+    | result :: members => .ok (.typeStruct result members)
+    | [] => .error "OpTypeStruct without operands"
+  else if e = OpTypePointer then
+    match ops with
+    | [result, storageClass, type] => .ok (.typePointer result storageClass type)
+    | _ => .error "OpTypePointer without exactly three operands"
+  else if e = OpVariable then
+    match ops with
+    | [resultType, result, storageClass] => .ok (.var resultType result storageClass none)
+    | [resultType, result, storageClass, initializer] => .ok (.var resultType result storageClass (some initializer))
+    | _ => .error "OpVariable without three or four operands"
+  else if e = OpMemberDecorate then
+    match ops with
+    | type :: member :: rest =>
+      match decodeDecoration rest with
+      | .ok d => .ok (.memberDecorate type member d)
+      | .error e => .error e
+    | _ => .error "OpMemberDecorate with fewer than three operands"
   else if h : e ∈ modelled then .error s!"opcode enumerant {e} is modelled but not decoded"
   else .ok (.other e ops h)
 
