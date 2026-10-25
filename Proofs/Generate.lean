@@ -9,7 +9,7 @@ import Proofs.Instruction
 namespace Proofs
 
 open Spvbind
-open Spec (Word Id Instruction Module Location Located VariableLocated)
+open Spec (Word Id Instruction Module LiteralString Location Located VariableLocated)
 open Spec.Cpp (Ty Member alignUp)
 open Std (HashMap HashSet)
 
@@ -115,20 +115,21 @@ theorem located_of_typeFloat {t w : Word} (hi : .typeFloat t w ∈ m.instruction
     exact .float hi
 
 theorem located_of_typeStruct {t : Id} {all : List Id} (hs : .typeStruct t all ∈ m.instructions) (l : Location) :
-    Located m t l ↔ ∃ (member byteOffset : Word) (u : Id) (l' : Location), all[member.toNat]? = some u ∧
-      .memberDecorate t member (.offset byteOffset) ∈ m.instructions ∧ Located m u l' ∧
-      l = ⟨member.toNat :: l'.path, byteOffset.toNat + l'.offset, l'.scalar⟩ := by
+    Located m t l ↔ ∃ (member byteOffset : Word) (u : Id) (l' : Location) (structName memberName : LiteralString),
+      all[member.toNat]? = some u ∧ .memberDecorate t member (.offset byteOffset) ∈ m.instructions ∧
+      .name t structName ∈ m.instructions ∧ .memberName t member memberName ∈ m.instructions ∧ Located m u l' ∧
+      l = ⟨⟨structName.value, member.toNat, memberName.value⟩ :: l'.path, byteOffset.toNat + l'.offset, l'.scalar⟩ := by
   constructor
   · intro h
     cases h with
     | unsigned hi => cases eq_of_nodup_filterMap hnd hi hs rfl rfl
     | signed hi => cases eq_of_nodup_filterMap hnd hi hs rfl rfl
     | float hi => cases eq_of_nodup_filterMap hnd hi hs rfl rfl
-    | member hs' hu hd hl =>
+    | member hs' hu hd hn hmn hl =>
       cases eq_of_nodup_filterMap hnd hs' hs rfl rfl
-      exact ⟨_, _, _, _, hu, hd, hl, rfl⟩
-  · rintro ⟨member, byteOffset, u, l', hu, hd, hl, rfl⟩
-    exact .member hs hu hd hl
+      exact ⟨_, _, _, _, _, _, hu, hd, hn, hmn, hl, rfl⟩
+  · rintro ⟨member, byteOffset, u, l', structName, memberName, hu, hd, hn, hmn, hl, rfl⟩
+    exact .member hs hu hd hn hmn hl
 
 end
 
@@ -138,6 +139,8 @@ end
 structure Facts (m : Module) (ctx : Context) : Prop where
   results : (m.instructions.filterMap result?).Nodup
   offsets : ∀ t k o, ctx.offsets[(t, k)]? = some o ↔ .memberDecorate t k (.offset o) ∈ m.instructions
+  names : ∀ t n, ctx.names[t]? = some n ↔ ∃ s, .name t s ∈ m.instructions ∧ s.value = n
+  memberNames : ∀ t k n, ctx.memberNames[(t, k)]? = some n ↔ ∃ s, .memberName t k s ∈ m.instructions ∧ s.value = n
 
 def Correct (m : Module) (types : Types) : Prop :=
   ∀ t c, types[t]? = some (.ok c) → ∀ l, l ∈ c.locations ↔ Located m t l
@@ -145,14 +148,17 @@ def Correct (m : Module) (types : Types) : Prop :=
 theorem toNat_toUInt32 {k : Nat} (h : k < 2 ^ 32) : k.toUInt32.toNat = k :=
   UInt32.toNat_ofNat_of_lt' (by simp only [UInt32.size]; omega)
 
-theorem locations_members {m : Module} {ctx : Context} {types : Types} {t : Id} {all : List Id} (hf : Facts m ctx)
-    (hc : Correct m types) :
+theorem locations_members {m : Module} {ctx : Context} {types : Types} {t : Id} {all : List Id} {sn : String}
+    (hf : Facts m ctx) (hc : Correct m types) (hsn : ctx.names[t]? = some sn) :
     ∀ (us : List Id) (k start : Nat) (ms : List Member), all.drop k = us →
       members ctx types t k start us = .ok ms →
-      ∀ l, l ∈ Spec.Cpp.Members.locations k start ms ↔
-        ∃ (member byteOffset : Word) (u : Id) (l' : Location), k ≤ member.toNat ∧ all[member.toNat]? = some u ∧
-          .memberDecorate t member (.offset byteOffset) ∈ m.instructions ∧ Located m u l' ∧
-          l = ⟨member.toNat :: l'.path, byteOffset.toNat + l'.offset, l'.scalar⟩ := by
+      ∀ l, l ∈ Spec.Cpp.Members.locations sn k start ms ↔
+        ∃ (member byteOffset : Word) (u : Id) (l' : Location) (structName memberName : LiteralString),
+          k ≤ member.toNat ∧ all[member.toNat]? = some u ∧
+          .memberDecorate t member (.offset byteOffset) ∈ m.instructions ∧ .name t structName ∈ m.instructions ∧
+          .memberName t member memberName ∈ m.instructions ∧ Located m u l' ∧
+          l = ⟨⟨structName.value, member.toNat, memberName.value⟩ :: l'.path, byteOffset.toNat + l'.offset,
+            l'.scalar⟩ := by
   intro us
   induction us with
   | nil =>
@@ -160,7 +166,7 @@ theorem locations_members {m : Module} {ctx : Context} {types : Types} {t : Id} 
     simp only [members, Except.ok.injEq] at h
     subst h
     simp only [Spec.Cpp.Members.locations, List.not_mem_nil, false_iff, not_exists, not_and]
-    intro member _ u _ hk hu
+    intro member _ u _ _ _ hk hu
     have h1 := List.drop_eq_nil_iff.mp hdrop
     have h2 := (List.getElem?_eq_some_iff.mp hu).1
     omega
@@ -176,7 +182,7 @@ theorem locations_members {m : Module} {ctx : Context} {types : Types} {t : Id} 
     case isFalse => cases h
     rename_i hk32
     split at h
-    case h_1 c byteOffset name htu hoff _ =>
+    case h_1 c byteOffset name htu hoff hmn =>
       split at h
       · cases h
       split at h
@@ -193,11 +199,13 @@ theorem locations_members {m : Module} {ctx : Context} {types : Types} {t : Id} 
       simp only [Spec.Cpp.Members.locations, ha, List.mem_append, List.mem_map,
         ih (k + 1) (byteOffset.toNat + c.size) rest hdrop' hrest l]
       constructor
-      · rintro (⟨l', hl', rfl⟩ | ⟨member, byteOffset', u', l', hk, hu', hd, hl, rfl⟩)
-        · refine ⟨k.toUInt32, byteOffset, u, l', by omega, by rw [hkk]; exact hu, (hf.offsets _ _ _).mp hoff,
-            (hc u c htu l').mp hl', by rw [hkk]⟩
-        · exact ⟨member, byteOffset', u', l', by omega, hu', hd, hl, rfl⟩
-      · rintro ⟨member, byteOffset', u', l', hk, hu', hd, hl, rfl⟩
+      · rintro (⟨l', hl', rfl⟩ | ⟨member, byteOffset', u', l', sName, mName, hk, hu', hd, hn, hmn', hl, rfl⟩)
+        · obtain ⟨sName, hn, hsv⟩ := (hf.names _ _).mp hsn
+          obtain ⟨mName, hmn', hmv⟩ := (hf.memberNames _ _ _).mp hmn
+          refine ⟨k.toUInt32, byteOffset, u, l', sName, mName, by omega, by rw [hkk]; exact hu,
+            (hf.offsets _ _ _).mp hoff, hn, hmn', (hc u c htu l').mp hl', by rw [hkk, hsv, hmv]⟩
+        · exact ⟨member, byteOffset', u', l', sName, mName, by omega, hu', hd, hn, hmn', hl, rfl⟩
+      · rintro ⟨member, byteOffset', u', l', sName, mName, hk, hu', hd, hn, hmn', hl, rfl⟩
         by_cases hm : member.toNat = k
         · have hmk : member = k.toUInt32 := UInt32.toNat_inj.mp (by rw [hm, hkk])
           subst hmk
@@ -206,8 +214,14 @@ theorem locations_members {m : Module} {ctx : Context} {types : Types} {t : Id} 
           have ho := (hf.offsets _ _ _).mpr hd
           rw [hoff] at ho
           cases ho
+          have hs := (hf.names _ _).mpr ⟨_, hn, rfl⟩
+          rw [hsn] at hs
+          cases hs
+          have hms := (hf.memberNames _ _ _).mpr ⟨_, hmn', rfl⟩
+          rw [hmn] at hms
+          cases hms
           exact .inl ⟨l', (hc u c htu l').mpr hl, by rw [hkk]⟩
-        · exact .inr ⟨member, byteOffset', u', l', by omega, hu', hd, hl, rfl⟩
+        · exact .inr ⟨member, byteOffset', u', l', sName, mName, by omega, hu', hd, hn, hmn', hl, rfl⟩
     all_goals cases h
 
 theorem locations_struct {m : Module} {ctx : Context} {types : Types} {t : Id} {all : List Id} {c : Ty}
@@ -216,6 +230,7 @@ theorem locations_struct {m : Module} {ctx : Context} {types : Types} {t : Id} {
   unfold struct at h
   split at h
   · cases h
+  rename_i name hname
   split at h
   · cases h
   split at h
@@ -224,7 +239,7 @@ theorem locations_struct {m : Module} {ctx : Context} {types : Types} {t : Id} {
   case h_2 => cases h
   rename_i ms hms
   cases h
-  simp only [Ty.locations, locations_members hf hc all 0 0 ms (List.drop_zero) hms l,
+  simp only [Ty.locations, locations_members hf hc hname all 0 0 ms (List.drop_zero) hms l,
     located_of_typeStruct hf.results hs l, Nat.zero_le, true_and]
 
 theorem correct_addType {m : Module} {ctx : Context} {types : Types} {i : Instruction} (hf : Facts m ctx)
@@ -309,7 +324,34 @@ theorem mem_blocks {types : Types} {pointers : HashMap Id Id} {v : Id} {c : Ty} 
         exact ⟨p', t', by simp [hv], hp', ht'⟩
     all_goals cases h
 
+theorem map_fst_blocks {types : Types} {pointers : HashMap Id Id} :
+    ∀ (vars : List (Id × Id)) (out : List (Id × Ty)), blocks types pointers vars = .ok out →
+      out.map Prod.fst = vars.map Prod.fst := by
+  intro vars
+  induction vars with
+  | nil => intro out h; simp only [blocks, Except.ok.injEq] at h; subst h; rfl
+  | cons var vars ih =>
+    intro out h
+    obtain ⟨v, p⟩ := var
+    unfold blocks at h
+    split at h
+    · cases h
+    split at h
+    case h_1 c _ =>
+      split at h
+      case h_2 => cases h
+      rename_i rest hrest
+      cases h
+      simp [ih rest hrest]
+    all_goals cases h
+
 /-! The generator. -/
+
+theorem pushConstant?_eq_some (i : Instruction) (v p : Id) :
+    pushConstant? i = some (v, p) ↔ ∃ initializer, i = .var p v Spec.PushConstant initializer := by
+  cases i <;> simp only [pushConstant?, reduceCtorEq, false_iff, not_exists, not_false_eq_true, implies_true]
+  case var resultType result storageClass initializer =>
+    split <;> simp_all [and_comm, eq_comm]
 
 theorem offset?_eq_some (i : Instruction) (t k o : Word) :
     offset? i = some ((t, k), o) ↔ i = .memberDecorate t k (.offset o) := by
@@ -317,7 +359,9 @@ theorem offset?_eq_some (i : Instruction) (t k o : Word) :
   case memberDecorate d => cases d <;> simp [and_assoc]
 
 theorem generate_correct (ws : List Word) (out : List (Id × Ty)) (h : generate ws = .ok out) :
-    ∃ m : Module, ws = m.words ∧ ∀ v c, (v, c) ∈ out → ∀ l, l ∈ c.locations ↔ VariableLocated m v l := by
+    ∃ m : Module, ws = m.words ∧ (out.map Prod.fst).Nodup ∧
+      (∀ v, v ∈ out.map Prod.fst ↔ Spec.PushConstantVariable m v) ∧
+      ∀ v c, (v, c) ∈ out → ∀ l, l ∈ c.locations ↔ VariableLocated m v l := by
   cases hd : decode ws with
   | error e => simp [generate, hd, bind, Except.bind] at h
   | ok m =>
@@ -331,18 +375,54 @@ theorem generate_correct (ws : List Word) (out : List (Id × Ty)) (h : generate 
     cases ho : distinct ((m.instructions.filterMap offset?).map Prod.fst) with
     | false => simp [generate, hd, hv, hr, ho, bind, Except.bind] at h
     | true =>
-    simp only [generate, hd, hv, hr, ho, bind, Except.bind, ↓reduceIte] at h
+    cases hn : distinct ((m.instructions.filterMap name?).map Prod.fst) with
+    | false => simp [generate, hd, hv, hr, ho, hn, bind, Except.bind] at h
+    | true =>
+    cases hmn : distinct ((m.instructions.filterMap memberName?).map Prod.fst) with
+    | false => simp [generate, hd, hv, hr, ho, hn, hmn, bind, Except.bind] at h
+    | true =>
+    simp only [generate, hd, hv, hr, ho, hn, hmn, bind, Except.bind, ↓reduceIte] at h
     have hnd := (distinct_eq_true _).mp hr
     have hno := (distinct_eq_true _).mp ho
     have hf : Facts m ⟨.ofList (m.instructions.filterMap offset?), .ofList (m.instructions.filterMap name?),
         .ofList (m.instructions.filterMap memberName?)⟩ := by
-      refine ⟨hnd, fun t k o => ?_⟩
-      rw [getElem?_ofList_eq_some hno, List.mem_filterMap]
-      simp [offset?_eq_some]
+      refine ⟨hnd, fun t k o => ?_, fun t n => ?_, fun t k n => ?_⟩
+      · rw [getElem?_ofList_eq_some hno, List.mem_filterMap]
+        simp [offset?_eq_some]
+      · rw [getElem?_ofList_eq_some ((distinct_eq_true _).mp hn), List.mem_filterMap]
+        constructor
+        · rintro ⟨i, hi, hni⟩
+          cases i <;> simp only [name?, reduceCtorEq, Option.some.injEq, Prod.mk.injEq] at hni
+          obtain ⟨rfl, rfl⟩ := hni
+          exact ⟨_, hi, rfl⟩
+        · rintro ⟨s, hs, rfl⟩
+          exact ⟨_, hs, rfl⟩
+      · rw [getElem?_ofList_eq_some ((distinct_eq_true _).mp hmn), List.mem_filterMap]
+        constructor
+        · rintro ⟨i, hi, hni⟩
+          cases i <;> simp only [memberName?, reduceCtorEq, Option.some.injEq, Prod.mk.injEq] at hni
+          obtain ⟨⟨rfl, rfl⟩, rfl⟩ := hni
+          exact ⟨_, hi, rfl⟩
+        · rintro ⟨s, hs, rfl⟩
+          exact ⟨_, hs, rfl⟩
     have hc := correct_foldl hf m.instructions ∅ (fun _ h => h) (correct_empty m)
     have hpk : ((m.instructions.filterMap pointer?).map Prod.fst).Nodup := by
       rw [List.map_filterMap]
       exact hnd.sublist (filterMap_sublist_filterMap (fun i x hx => by cases i <;> simp_all [pointer?, result?]) _)
+    have hfst := map_fst_blocks _ _ h
+    refine ⟨?_, fun v => ?_, ?_⟩
+    · rw [hfst, List.map_filterMap]
+      refine hnd.sublist (filterMap_sublist_filterMap (fun i x hx => ?_) _)
+      cases i <;> simp only [pushConstant?, Option.map_none, reduceCtorEq] at hx
+      split at hx <;> simp_all [result?]
+    · rw [hfst, List.mem_map]
+      constructor
+      · rintro ⟨⟨v', p⟩, hm, rfl⟩
+        obtain ⟨i, hi, hpi⟩ := List.mem_filterMap.mp hm
+        obtain ⟨initializer, rfl⟩ := (pushConstant?_eq_some _ _ _).mp hpi
+        exact ⟨p, initializer, hi⟩
+      · rintro ⟨p, initializer, hi⟩
+        exact ⟨(v, p), List.mem_filterMap.mpr ⟨_, hi, (pushConstant?_eq_some _ _ _).mpr ⟨initializer, rfl⟩⟩, rfl⟩
     intro v c hm l
     obtain ⟨p, t, hv, hp, ht⟩ := mem_blocks _ _ h hm
     rw [hc t c ht l]

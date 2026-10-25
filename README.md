@@ -43,9 +43,10 @@ static_assert(sizeof(Params) == 24);
 static_assert(alignof(Params) == 8);
 ```
 
-and likewise `Range`. `Guarantees.generate_correct` proves that, in spvbind's model of C++ layout, every scalar
-sits at the offset the shader's `Offset` decorations give it; the `static_assert`s make the C++ compiler check every
-offset, size and alignment of that model. Padding is explicit. A struct filled from C++ can be pushed as is:
+and likewise `Range`. `Guarantees.generate_correct` proves that the generator emits one C++ type for each push
+constant variable of the module and for no other variable, and that, in spvbind's model of C++ layout, every scalar of
+each sits at the offset the shader's `Offset` decorations give it; the `static_assert`s make the C++ compiler check
+every offset, size and alignment of that model. Padding is explicit. A struct filled from C++ can be pushed as is:
 
 ```cpp
 Params params{.count = n, .scale = 2.0, .range = {.lo = 0.0f, .hi = 1.0f}};

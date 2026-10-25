@@ -18,10 +18,10 @@ def Scalar.bytes : Scalar → Nat
   | .float width => width.toNat / 8
 
 mutual
-/-- A C++ type: a scalar, or a struct emitted for the SPIR-V type `id`. -/
+/-- A C++ type: a scalar, or a struct. -/
 inductive Ty where
   | scalar (s : Scalar)
-  | struct (id : Id) (name : String) (members : List Member)
+  | struct (name : String) (members : List Member)
 
 /-- A member of a struct, after `padding` bytes of explicit padding (none if 0). -/
 inductive Member where
@@ -35,7 +35,7 @@ mutual
 /-- `alignof`: a struct is aligned like its most aligned member. -/
 def Ty.align : Ty → Nat
   | .scalar s => Scalar.bytes s
-  | .struct _ _ members => Members.align members
+  | .struct _ members => Members.align members
 
 def Members.align : List Member → Nat
   | [] => 1
@@ -46,7 +46,7 @@ mutual
 /-- `sizeof`: a struct ends after its last member, rounded up to its alignment. -/
 def Ty.size : Ty → Nat
   | .scalar s => Scalar.bytes s
-  | .struct _ _ members => alignUp (Members.end 0 members) (Members.align members)
+  | .struct _ members => alignUp (Members.end 0 members) (Members.align members)
 
 /-- Where `members` end, if they start at byte `start`. -/
 def Members.end (start : Nat) : List Member → Nat
@@ -64,14 +64,15 @@ mutual
 /-- Every scalar of a value of the type, with its path and offset. -/
 def Ty.locations : Ty → List Location
   | .scalar s => [⟨[], 0, s⟩]
-  | .struct _ _ members => Members.locations 0 0 members
+  | .struct name members => Members.locations name 0 0 members
 
-/-- Every scalar of `members`, numbered from `index` and starting at byte `start`. -/
-def Members.locations (index start : Nat) : List Member → List Location
+/-- Every scalar of `members` of the struct named `struct`, numbered from `index` and starting at byte `start`. -/
+def Members.locations (struct : String) (index start : Nat) : List Member → List Location
   | [] => []
-  | .mk _ padding type :: members =>
-    type.locations.map (fun l => ⟨index :: l.path, alignUp (start + padding) type.align + l.offset, l.scalar⟩) ++
-      Members.locations (index + 1) (alignUp (start + padding) type.align + type.size) members
+  | .mk name padding type :: members =>
+    type.locations.map (fun l =>
+        ⟨⟨struct, index, name⟩ :: l.path, alignUp (start + padding) type.align + l.offset, l.scalar⟩) ++
+      Members.locations struct (index + 1) (alignUp (start + padding) type.align + type.size) members
 end
 
 end Spec.Cpp

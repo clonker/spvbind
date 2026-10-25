@@ -21,10 +21,19 @@ inductive Scalar
   | float (width : Word)
   deriving DecidableEq, Repr
 
-/-- A scalar in a value: `path` selects it, one member index per level, and it is `offset` bytes from the start of the
+/-- One step of a path: member `index` of a structure, with the structure's name (OpName) and the member's
+(OpMemberName). Names are only debug information to SPIR-V (2.15), but they are how C++ reaches each scalar, so a
+location includes them. -/
+structure Step where
+  struct : String
+  index : Nat
+  member : String
+  deriving DecidableEq, Repr
+
+/-- A scalar in a value: `path` selects it, one step per level, and it is `offset` bytes from the start of the
 value. -/
 structure Location where
-  path : List Nat
+  path : List Step
   offset : Nat
   scalar : Scalar
   deriving DecidableEq, Repr
@@ -42,11 +51,16 @@ inductive Located (m : Module) : Id → Location → Prop
   | float {type width : Word} :
       .typeFloat type width ∈ m.instructions → Located m type ⟨[], 0, .float width⟩
   /-- Member `member` of a structure is `byteOffset` bytes from the start of the structure (Offset), and so is every
-  scalar in it, relative to where it is in the member. -/
-  | member {type memberType : Id} {members : List Id} {member byteOffset : Word} {l : Location} :
+  scalar in it, relative to where it is in the member. The step is named by the structure's OpName and the member's
+  OpMemberName. -/
+  | member {type memberType : Id} {members : List Id} {member byteOffset : Word} {structName memberName : LiteralString}
+      {l : Location} :
       .typeStruct type members ∈ m.instructions → members[member.toNat]? = some memberType →
-      .memberDecorate type member (.offset byteOffset) ∈ m.instructions → Located m memberType l →
-      Located m type ⟨member.toNat :: l.path, byteOffset.toNat + l.offset, l.scalar⟩
+      .memberDecorate type member (.offset byteOffset) ∈ m.instructions →
+      .name type structName ∈ m.instructions → .memberName type member memberName ∈ m.instructions →
+      Located m memberType l →
+      Located m type
+        ⟨⟨structName.value, member.toNat, memberName.value⟩ :: l.path, byteOffset.toNat + l.offset, l.scalar⟩
 
 /-- `VariableLocated m v l`: the same, in the object that variable `v` points to. OpVariable (3.3.8): "Result Type
 must be an OpTypePointer. Its Type operand is the type of object in memory." -/
@@ -54,5 +68,10 @@ inductive VariableLocated (m : Module) (v : Id) (l : Location) : Prop
   | mk {pointer type : Id} {storageClass pointerStorageClass : Word} {initializer : Option Id} :
       .var pointer v storageClass initializer ∈ m.instructions →
       .typePointer pointer pointerStorageClass type ∈ m.instructions → Located m type l → VariableLocated m v l
+
+/-- `PushConstantVariable m v`: `v` is a variable "for holding push-constant memory" (3.2.6, Storage Class,
+PushConstant), an OpVariable with storage class PushConstant. -/
+def PushConstantVariable (m : Module) (v : Id) : Prop :=
+  ∃ (pointer : Id) (initializer : Option Id), .var pointer v PushConstant initializer ∈ m.instructions
 
 end Spec

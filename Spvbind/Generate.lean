@@ -8,8 +8,8 @@ import Spvbind.Instruction
 
 Types are resolved in one pass over the instructions, in order: a type's operands are "declared before being used"
 (2.4, Logical Layout of a Module), so the C++ types of a struct's members are known when the struct is reached, and a
-type cannot contain itself. Every id spvbind reads must be defined once and every member have at most one Offset, so
-that each id and member means one thing.
+type cannot contain itself. Every id spvbind reads must be defined once, and every id and member have at most one
+Offset, OpName and OpMemberName, so that each id and member means one thing.
 -/
 
 namespace Spvbind
@@ -139,7 +139,7 @@ def struct (ctx : Context) (types : Types) (type : Id) (memberTypes : List Id) :
     else if memberTypes = [] then .error s!"{name} has no members"
     else
       match members ctx types type 0 0 memberTypes with
-      | .ok ms => .ok (.struct type name ms)
+      | .ok ms => .ok (.struct name ms)
       | .error e => .error e
 
 /-- `types`, with the type an instruction defines. -/
@@ -172,6 +172,10 @@ def generate (ws : List Word) : Except String (List (Id × Ty)) := do
     throw "an id is defined by more than one instruction"
   unless distinct ((m.instructions.filterMap offset?).map Prod.fst) do
     throw "a member has more than one Offset decoration"
+  unless distinct ((m.instructions.filterMap name?).map Prod.fst) do
+    throw "an id has more than one OpName"
+  unless distinct ((m.instructions.filterMap memberName?).map Prod.fst) do
+    throw "a member has more than one OpMemberName"
   let ctx : Context := {
     offsets := .ofList (m.instructions.filterMap offset?)
     names := .ofList (m.instructions.filterMap name?)
