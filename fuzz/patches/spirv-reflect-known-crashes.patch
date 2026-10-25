@@ -1,0 +1,85 @@
+diff --git a/spirv_reflect.c b/spirv_reflect.c
+index 3f1ae6b..b3f886a 100644
+--- a/spirv_reflect.c
++++ b/spirv_reflect.c
+@@ -695,16 +695,16 @@ static void DestroyParser(SpvReflectPrvParser* p_parser) {
+       }
+     }
+ 
+-    // Free functions
+-    for (size_t i = 0; i < p_parser->function_count; ++i) {
++    // Free functions; after a failed parse the count may be set with nothing allocated yet
++    for (size_t i = 0; IsNotNull(p_parser->functions) && i < p_parser->function_count; ++i) {
+       SafeFree(p_parser->functions[i].parameters);
+       SafeFree(p_parser->functions[i].callees);
+       SafeFree(p_parser->functions[i].callee_ptrs);
+       SafeFree(p_parser->functions[i].accessed_variables);
+     }
+ 
+-    // Free access chains
+-    for (uint32_t i = 0; i < p_parser->access_chain_count; ++i) {
++    // Free access chains; likewise
++    for (uint32_t i = 0; IsNotNull(p_parser->access_chains) && i < p_parser->access_chain_count; ++i) {
+       SafeFree(p_parser->access_chains[i].indexes);
+     }
+ 
+@@ -846,6 +846,10 @@ static SpvReflectResult ParseNodes(SpvReflectPrvParser* p_parser) {
+ 
+       case SpvOpSourceContinued: {
+         const char* p_source = (const char*)(p_parser->spirv_code + p_node->word_offset + 1);
++        // Without an OpSource with embedded text before it there is nothing to continue
++        if (IsNull(p_parser->source_embedded)) {
++          return SPV_REFLECT_RESULT_ERROR_SPIRV_INVALID_INSTRUCTION;
++        }
+ 
+         const size_t source_len = strlen(p_source);
+         const size_t embedded_source_len = strlen(p_parser->source_embedded);
+@@ -1494,6 +1498,10 @@ static SpvReflectResult ParseMemberCounts(SpvReflectPrvParser* p_parser) {
+       if (member_index == (uint32_t)INVALID_VALUE) {
+         return SPV_REFLECT_RESULT_ERROR_RANGE_EXCEEDED;
+       }
++      // A struct has word_count - 2 members; an index past them would size the member arrays by it
++      if (p_target_node->op == SpvOpTypeStruct && member_index >= p_target_node->word_count - 2) {
++        return SPV_REFLECT_RESULT_ERROR_RANGE_EXCEEDED;
++      }
+ 
+       p_target_node->member_count = Max(p_target_node->member_count, member_index + 1);
+     }
+@@ -1914,9 +1922,27 @@ static SpvReflectResult EnumerateAllUniforms(SpvReflectShaderModule* p_module, s
+   return SPV_REFLECT_RESULT_SUCCESS;
+ }
+ 
++static SpvReflectResult ParseTypeImpl(SpvReflectPrvParser* p_parser, SpvReflectPrvNode* p_node,
++                                      SpvReflectPrvDecorations* p_struct_member_decorations,
++                                      SpvReflectShaderModule* p_module, SpvReflectTypeDescription* p_type);
++
++// A type that contains itself (invalid SPIR-V) would otherwise recurse until the stack overflows.
+ static SpvReflectResult ParseType(SpvReflectPrvParser* p_parser, SpvReflectPrvNode* p_node,
+                                   SpvReflectPrvDecorations* p_struct_member_decorations, SpvReflectShaderModule* p_module,
+                                   SpvReflectTypeDescription* p_type) {
++  static int depth = 0;
++  if (depth >= 128) {
++    return SPV_REFLECT_RESULT_ERROR_SPIRV_MAX_RECURSIVE_EXCEEDED;
++  }
++  ++depth;
++  SpvReflectResult result = ParseTypeImpl(p_parser, p_node, p_struct_member_decorations, p_module, p_type);
++  --depth;
++  return result;
++}
++
++static SpvReflectResult ParseTypeImpl(SpvReflectPrvParser* p_parser, SpvReflectPrvNode* p_node,
++                                      SpvReflectPrvDecorations* p_struct_member_decorations,
++                                      SpvReflectShaderModule* p_module, SpvReflectTypeDescription* p_type) {
+   SpvReflectResult result = SPV_REFLECT_RESULT_SUCCESS;
+ 
+   if (p_node->member_count > 0) {
+@@ -5112,7 +5138,8 @@ void spvReflectDestroyShaderModule(SpvReflectShaderModule* p_module) {
+   // Entry points
+   for (size_t i = 0; i < p_module->entry_point_count; ++i) {
+     SpvReflectEntryPoint* p_entry = &p_module->entry_points[i];
+-    for (size_t j = 0; j < p_entry->interface_variable_count; j++) {
++    // After a failed parse the count may be set with nothing allocated yet
++    for (size_t j = 0; IsNotNull(p_entry->interface_variables) && j < p_entry->interface_variable_count; j++) {
+       SafeFreeInterfaceVariable(&p_entry->interface_variables[j]);
+     }
+     for (uint32_t j = 0; j < p_entry->descriptor_set_count; ++j) {
