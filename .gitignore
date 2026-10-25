@@ -1,4 +1,6 @@
 /.lake/
 /.idea/
 /cmake-build-*/
+/fuzz/build*/
+/fuzz/findings/
 __pycache__/

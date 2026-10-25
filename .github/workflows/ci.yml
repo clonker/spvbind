@@ -38,3 +38,50 @@ jobs:
           # SPIRV-Headers main as of 2026-10-21.
           curl -sSfL -o spirv.core.grammar.json https://raw.githubusercontent.com/KhronosGroup/SPIRV-Headers/fbf86836a9b1966586faf7be7bb8a6440e156d62/include/spirv/unified1/spirv.core.grammar.json
           tests/grammar.py spirv.core.grammar.json
+      - name: Differential fuzzing of SPIRV-Reflect, briefly
+        run: |
+          cmake -S fuzz -B fuzz/build -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_C_COMPILER=clang -DSPVBIND_FUZZ_SANITIZE=ON
+          cmake --build fuzz/build
+          # Findings are SPIRV-Reflect's, not spvbind's, so they are uploaded rather than failing the build; only a
+          # crash of spvbind fails it.
+          fuzz/differential.py -n 600 --seed "$GITHUB_RUN_ID" --findings fuzz/findings --fail-on none
+      - name: Fuzzing findings
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fuzzing-findings
+          path: fuzz/findings
+          if-no-files-found: ignore
+
+  # Coverage-guided, with FuzzTest: SPIRV-Reflect and spvbind's compiled Lean code in one instrumented process. Findings
+  # are SPIRV-Reflect's, so this job does not block.
+  fuzztest:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: leanprover/lean-action@24581d74d674803a25a81b10b059c5c0cdd344c6 # v1.6.2
+        with:
+          build-args: Spvbind
+          test: false
+      - name: Build with FuzzTest in fuzzing mode
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends glslc
+          CC=clang CXX=clang++ cmake -S fuzz -B fuzz/build-fuzztest -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DSPVBIND_FUZZTEST=ON -DFUZZTEST_FUZZING_MODE=ON
+          cmake --build fuzz/build-fuzztest --target spvbind_fuzz
+      - name: Unit-test mode
+        run: fuzz/build-fuzztest/spvbind_fuzz
+      - name: Fuzz the structured domain
+        run: |
+          FUZZTEST_REPRODUCERS_OUT_DIR=fuzz/findings/fuzztest fuzz/build-fuzztest/spvbind_fuzz \
+            --fuzz=Differential.OracleAgreesOnInterfaces --fuzz_for=120s
+      - name: Fuzzing findings
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fuzztest-findings
+          path: fuzz/findings
+          if-no-files-found: ignore

@@ -109,5 +109,8 @@ tests/grammar.py spirv.core.grammar.json  # Spec/Instruction.lean against SPIRV-
 ## spvbind as an oracle
 
 `--locations` prints exactly what `generate_correct` is about, so another reflection library can be fuzzed against it:
-generate a module, ask both where every scalar of every push constant block is, and compare. A difference on a valid
-module is a bug in that library, or a gap in `Spec`.
+generate a module, ask both where every scalar of every push constant block is, and compare. `fuzz/` does this for
+[SPIRV-Reflect](https://github.com/KhronosGroup/SPIRV-Reflect) in two ways: a Python driver with random GLSL, random
+SPIR-V written word by word and mutations, and a coverage-guided [FuzzTest](https://github.com/google/fuzztest) binary
+that links spvbind's compiled Lean code and SPIRV-Reflect into one instrumented process; see
+[`fuzz/README.md`](fuzz/README.md).
