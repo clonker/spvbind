@@ -1,0 +1,19 @@
+; A struct without members has size 1 in C++.
+; target-env: vulkan1.3
+               OpCapability Shader
+               OpMemoryModel Logical GLSL450
+               OpEntryPoint GLCompute %main "main" %pc
+               OpExecutionMode %main LocalSize 1 1 1
+               OpName %S "S"
+               OpName %pc ""
+               OpDecorate %S Block
+       %void = OpTypeVoid
+         %fn = OpTypeFunction %void
+      %float = OpTypeFloat 32
+          %S = OpTypeStruct
+        %ptr = OpTypePointer PushConstant %S
+         %pc = OpVariable %ptr PushConstant
+       %main = OpFunction %void None %fn
+      %label = OpLabel
+               OpReturn
+               OpFunctionEnd

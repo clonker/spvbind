@@ -1,0 +1,17 @@
+; A push constant variable that points to a scalar: no header, but a location.
+; target-env: vulkan1.3
+               OpCapability Shader
+               OpMemoryModel Logical GLSL450
+               OpEntryPoint GLCompute %main "main" %pc
+               OpExecutionMode %main LocalSize 1 1 1
+               OpName %pc ""
+
+       %void = OpTypeVoid
+         %fn = OpTypeFunction %void
+      %float = OpTypeFloat 32
+        %ptr = OpTypePointer PushConstant %float
+         %pc = OpVariable %ptr PushConstant
+       %main = OpFunction %void None %fn
+      %label = OpLabel
+               OpReturn
+               OpFunctionEnd

@@ -6,29 +6,74 @@ import Spec.Binary
 
 namespace Spvbind
 
-open Spec (Word Byte magic Header)
+open Spec (Word Byte magic Header wordOfOctets packOctets LiteralString)
 
-/-- The word with its four bytes in reverse order. -/
+/-- The word with its four octets in reverse order. -/
 def byteReverse (w : Word) : Word :=
-  (w >>> 24) ||| ((w >>> 8) &&& (0xff00 : Word)) ||| ((w <<< 8) &&& (0xff0000 : Word)) ||| (w <<< 24)
+  wordOfOctets (w >>> 24).toUInt8 (w >>> 16).toUInt8 (w >>> 8).toUInt8 w.toUInt8
 
-/-- The little-endian words of `bytes`, if its size is a multiple of 4. -/
-def littleEndianWords (bytes : ByteArray) : Option (Array Word) :=
-  if bytes.size % 4 = 0 then
-    some <| Array.ofFn fun (i : Fin (bytes.size / 4)) =>
-      let byte (k : Fin 4) : Word := (bytes[4 * i.val + k.val]'(by omega) : Byte).toUInt32
-      byte 0 ||| byte 1 <<< 8 ||| byte 2 <<< 16 ||| byte 3 <<< 24
-  else
-    none
+/-- The words whose octets, each word's lowest-order octet first, are `bytes`, if there are four per word. -/
+def wordsOfOctets : List Byte → Option (List Word)
+  | b0 :: b1 :: b2 :: b3 :: rest => (wordsOfOctets rest).map (wordOfOctets b0 b1 b2 b3 :: ·)
+  | [] => some []
+  | [_] | [_, _] | [_, _, _] => none
 
-/-- The words of a module stored as bytes, in the byte order its magic number is in. A module is a stream of words,
-not of bytes; how to store it is only a tip (3.1, Endianness). Whether there is a magic number at all is left to
-`decodeHeader`. -/
-def words (bytes : ByteArray) : Except String (List Word) := do
-  let some ws := littleEndianWords bytes
-    | throw s!"size {bytes.size} is not a multiple of 4"
-  if ws[0]? = some (byteReverse magic) then return (ws.map byteReverse).toList
-  else return ws.toList
+/-! The recursion of `wordsOfOctets`, of `decodeInstructions` (in `Spvbind/Instruction.lean`) and of
+`Spec.packOctets` is as deep as the input is long, which is how the specification reads but not how an oracle should
+treat untrusted input. Each gets a twin with an accumulator that the compiler uses instead (`@[csimp]`); the theorems
+are about the originals, and Lean checks that the twins agree. -/
+
+/-- `wordsOfOctets`, iteratively. -/
+def wordsOfOctetsTR (bs : List Byte) : Option (List Word) := go bs #[]
+where
+  go : List Byte → Array Word → Option (List Word)
+    | b0 :: b1 :: b2 :: b3 :: rest, acc => go rest (acc.push (wordOfOctets b0 b1 b2 b3))
+    | [], acc => some acc.toList
+    | [_], _ | [_, _], _ | [_, _, _], _ => none
+
+theorem wordsOfOctetsTR_go (bs : List Byte) (acc : Array Word) :
+    wordsOfOctetsTR.go bs acc = (wordsOfOctets bs).map (acc.toList ++ ·) := by
+  fun_induction wordsOfOctetsTR.go bs acc with
+  | case1 b0 b1 b2 b3 rest acc ih =>
+    rw [ih]
+    simp only [wordsOfOctets]
+    cases wordsOfOctets rest <;> simp
+  | _ => simp [wordsOfOctets]
+
+@[csimp] theorem wordsOfOctets_eq_wordsOfOctetsTR : @wordsOfOctets = @wordsOfOctetsTR := by
+  funext bs
+  cases h : wordsOfOctets bs <;> simp [wordsOfOctetsTR, wordsOfOctetsTR_go, h]
+
+/-- `Spec.packOctets`, iteratively. -/
+def packOctetsTR (bs : List Byte) : List Word := go bs #[]
+where
+  go : List Byte → Array Word → List Word
+    | b0 :: b1 :: b2 :: b3 :: rest, acc => go rest (acc.push (wordOfOctets b0 b1 b2 b3))
+    | [b0, b1, b2], acc => (acc.push (wordOfOctets b0 b1 b2 0)).toList
+    | [b0, b1], acc => (acc.push (wordOfOctets b0 b1 0 0)).toList
+    | [b0], acc => (acc.push (wordOfOctets b0 0 0 0)).toList
+    | [], acc => acc.toList
+
+theorem packOctetsTR_go (bs : List Byte) (acc : Array Word) :
+    packOctetsTR.go bs acc = acc.toList ++ packOctets bs := by
+  fun_induction packOctetsTR.go bs acc with
+  | case1 b0 b1 b2 b3 rest acc ih => simp [ih, packOctets]
+  | _ => simp [packOctets]
+
+/-- `Spec.LiteralString.words`, iteratively; the compiled code of `Spec` itself is not affected, only calls from here. -/
+def literalStringWordsTR (s : LiteralString) : List Word := packOctetsTR (s.value.toUTF8.data.toList ++ [0])
+
+@[csimp] theorem literalString_words_eq_literalStringWordsTR : @LiteralString.words = @literalStringWordsTR := by
+  funext s
+  simp [LiteralString.words, literalStringWordsTR, packOctetsTR, packOctetsTR_go]
+
+/-- The words of a module stored as bytes, in the byte order its magic number is in: little-endian, unless the first
+word read that way is the magic number with its octets reversed. A module is a stream of words, not of bytes; how to
+store it is only a tip (3.1, Endianness). Whether there is a magic number at all is left to `decodeHeader`. -/
+def words (bytes : ByteArray) : Except String (List Word) :=
+  match wordsOfOctets bytes.toList with
+  | none => .error s!"size {bytes.size} is not a multiple of 4"
+  | some ws => if ws.head? = some (byteReverse magic) then .ok (ws.map byteReverse) else .ok ws
 
 /-- The header and the words after it. -/
 def decodeHeader : List Word → Except String (Header × List Word)

@@ -39,6 +39,8 @@ struct Params
 static_assert(offsetof(Params, count) == 0);
 static_assert(offsetof(Params, scale) == 8);
 static_assert(offsetof(Params, range) == 16);
+static_assert(std::is_integral_v<decltype(Params::count)> && std::is_unsigned_v<decltype(Params::count)> && sizeof(Params::count) == 4);
+static_assert(std::is_floating_point_v<decltype(Params::scale)> && std::numeric_limits<decltype(Params::scale)>::is_iec559 && sizeof(Params::scale) == 8);
 static_assert(sizeof(Params) == 24);
 static_assert(alignof(Params) == 8);
 ```
@@ -46,7 +48,8 @@ static_assert(alignof(Params) == 8);
 and likewise `Range`. `Guarantees.generate_correct` proves that the generator emits one C++ type for each push
 constant variable of the module and for no other variable, and that, in spvbind's model of C++ layout, every scalar of
 each sits at the offset the shader's `Offset` decorations give it; the `static_assert`s make the C++ compiler check
-every offset, size and alignment of that model. Padding is explicit. A struct filled from C++ can be pushed as is:
+every offset, scalar type, size and alignment of that model. Padding is explicit. A struct filled from C++ can be
+pushed as is:
 
 ```cpp
 Params params{.count = n, .scale = 2.0, .range = {.lo = 0.0f, .hi = 1.0f}};
@@ -63,10 +66,9 @@ vkCmdPushConstants(commandBuffer, layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof
 
 `Guarantees.lean` restates the theorems that matter, proven in `Proofs`, and the build fails if they depend on
 anything but Lean's standard axioms.
-Crucial is the `Spec` directory, and the few parts outside the theorems: 
-- the printer (`Spvbind/Print.lean`), 
-- the axiom check (`Guarantees/Axioms.lean`), 
-- reading the file (`words`),
+Crucial is the `Spec` directory, and the few parts outside the theorems:
+- the printer (`Spvbind/Print.lean`),
+- the axiom check (`Guarantees/Axioms.lean`),
 - and `Main.lean`.
 
 ## Specifications
@@ -83,9 +85,27 @@ Crucial is the `Spec` directory, and the few parts outside the theorems:
 Requires [elan](https://github.com/leanprover/elan); the Lean version is pinned in `lean-toolchain`.
 
 ```sh
-lake build                            # the executable and all proofs
-.lake/build/bin/spvbind shader.spv > shader.hpp  # the push constant blocks, as C++ structs
+lake build                                        # the executable and all proofs
+.lake/build/bin/spvbind shader.spv > shader.hpp   # the push constant blocks, as C++ structs
+.lake/build/bin/spvbind --locations shader.spv    # every scalar with its path, offset and type, for comparing
 ```
 
-The module must be compiled without optimization (`glslc` without `-O`), which would remove the names. For now only
-push constant blocks of integers, floats and nested structs are supported.
+The module must be compiled without optimization (`glslc` without `-O`), which would remove the names, and be SPIR-V
+1.4 or later (`--target-env=vulkan1.2` or later). For now only push constant blocks of integers, floats and nested
+structs are supported, with members in offset order; anything else is rejected with a message naming the member.
+
+## Tests
+
+Proofs show that the generator matches `Spec`; tests cover what they do not, and need `glslc`, `spirv-as` and a C++
+compiler:
+
+```sh
+tests/run.py                              # headers and locations of GLSL cases, rejections, raw bytes, big-endian
+tests/grammar.py spirv.core.grammar.json  # Spec/Instruction.lean against SPIRV-Headers' grammar
+```
+
+## spvbind as an oracle
+
+`--locations` prints exactly what `generate_correct` is about, so another reflection library can be fuzzed against it:
+generate a module, ask both where every scalar of every push constant block is, and compare. A difference on a valid
+module is a bug in that library, or a gap in `Spec`.

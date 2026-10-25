@@ -23,7 +23,7 @@ jobs:
       - name: Example compiled with glslc
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends glslc
+          sudo apt-get install -y --no-install-recommends glslc spirv-tools
           glslc --target-env=vulkan1.3 -o examples/params.spv examples/params.comp
           .lake/build/bin/spvbind examples/params.spv | diff -u examples/params.hpp -
       - name: The header compiles
@@ -31,3 +31,10 @@ jobs:
           for cxx in g++ clang++; do
             echo '#include "params.hpp"' | $cxx -std=c++20 -Wall -Wextra -Werror -fsyntax-only -I examples -x c++ -
           done
+      - name: Tests of the executable
+        run: tests/run.py
+      - name: Spec/Instruction.lean against the SPIR-V grammar
+        run: |
+          # SPIRV-Headers main as of 2026-10-21.
+          curl -sSfL -o spirv.core.grammar.json https://raw.githubusercontent.com/KhronosGroup/SPIRV-Headers/fbf86836a9b1966586faf7be7bb8a6440e156d62/include/spirv/unified1/spirv.core.grammar.json
+          tests/grammar.py spirv.core.grammar.json

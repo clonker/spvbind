@@ -5,6 +5,8 @@
 #include <climits>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
+#include <type_traits>
 
 static_assert(CHAR_BIT == 8);
 
@@ -15,6 +17,8 @@ struct Range
 };
 static_assert(offsetof(Range, lo) == 0);
 static_assert(offsetof(Range, hi) == 4);
+static_assert(std::is_floating_point_v<decltype(Range::lo)> && std::numeric_limits<decltype(Range::lo)>::is_iec559 && sizeof(Range::lo) == 4);
+static_assert(std::is_floating_point_v<decltype(Range::hi)> && std::numeric_limits<decltype(Range::hi)>::is_iec559 && sizeof(Range::hi) == 4);
 static_assert(sizeof(Range) == 8);
 static_assert(alignof(Range) == 4);
 
@@ -28,5 +32,7 @@ struct Params
 static_assert(offsetof(Params, count) == 0);
 static_assert(offsetof(Params, scale) == 8);
 static_assert(offsetof(Params, range) == 16);
+static_assert(std::is_integral_v<decltype(Params::count)> && std::is_unsigned_v<decltype(Params::count)> && sizeof(Params::count) == 4);
+static_assert(std::is_floating_point_v<decltype(Params::scale)> && std::numeric_limits<decltype(Params::scale)>::is_iec559 && sizeof(Params::scale) == 8);
 static_assert(sizeof(Params) == 24);
 static_assert(alignof(Params) == 8);

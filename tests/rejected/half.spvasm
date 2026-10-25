@@ -1,0 +1,23 @@
+; A 16-bit float, which C++ has no standard type for.
+; target-env: vulkan1.3
+               OpCapability Shader
+               OpCapability Float16
+               OpCapability StoragePushConstant16
+               OpMemoryModel Logical GLSL450
+               OpEntryPoint GLCompute %main "main" %pc
+               OpExecutionMode %main LocalSize 1 1 1
+               OpName %S "S"
+               OpMemberName %S 0 "x"
+               OpName %pc ""
+               OpDecorate %S Block
+               OpMemberDecorate %S 0 Offset 0
+       %void = OpTypeVoid
+         %fn = OpTypeFunction %void
+      %float = OpTypeFloat 16
+          %S = OpTypeStruct %float
+        %ptr = OpTypePointer PushConstant %S
+         %pc = OpVariable %ptr PushConstant
+       %main = OpFunction %void None %fn
+      %label = OpLabel
+               OpReturn
+               OpFunctionEnd

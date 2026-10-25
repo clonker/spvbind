@@ -1,0 +1,27 @@
+; Two different structs with the same name: no header, but the locations are fine.
+; target-env: vulkan1.3
+               OpCapability Shader
+               OpMemoryModel Logical GLSL450
+               OpEntryPoint GLCompute %main "main" %pc
+               OpExecutionMode %main LocalSize 1 1 1
+               OpName %S "S"
+               OpMemberName %S 0 "x"
+               OpName %T "S"
+               OpMemberName %T 0 "y"
+               OpMemberName %S 1 "t"
+               OpName %pc ""
+               OpDecorate %S Block
+               OpMemberDecorate %S 0 Offset 0
+               OpMemberDecorate %S 1 Offset 4
+               OpMemberDecorate %T 0 Offset 0
+       %void = OpTypeVoid
+         %fn = OpTypeFunction %void
+      %float = OpTypeFloat 32
+          %T = OpTypeStruct %float
+          %S = OpTypeStruct %float %T
+        %ptr = OpTypePointer PushConstant %S
+         %pc = OpVariable %ptr PushConstant
+       %main = OpFunction %void None %fn
+      %label = OpLabel
+               OpReturn
+               OpFunctionEnd

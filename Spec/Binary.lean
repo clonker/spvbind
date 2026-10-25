@@ -2,7 +2,7 @@
 # The SPIR-V binary format: words, header and literal strings
 
 SPIR-V specification, version 1.6, revision 8 (https://registry.khronos.org/SPIR-V/specs/unified1/SPIRV.html):
-2.2 Terms, 2.3 Physical Layout of a SPIR-V Module and Instruction, 3.1 Magic Number.
+2.2 Terms, 2.3 Physical Layout of a SPIR-V Module and Instruction, 3.1 Magic Number (and Endianness).
 -/
 
 namespace Spec
@@ -43,6 +43,17 @@ def Header.minor (h : Header) : Byte := (h.version >>> 8).toUInt8
 /-- Four octets as a word, the first in the lowest-order 8 bits (2.2.1, Literal). -/
 def wordOfOctets (b0 b1 b2 b3 : Byte) : Word :=
   b0.toUInt32 ||| b1.toUInt32 <<< 8 ||| b2.toUInt32 <<< 16 ||| b3.toUInt32 <<< 24
+
+/-- The four octets of a word, the first from the lowest-order 8 bits (2.2.1, Literal). -/
+def octets (w : Word) : List Byte :=
+  [w.toUInt8, (w >>> 8).toUInt8, (w >>> 16).toUInt8, (w >>> 24).toUInt8]
+
+/-- 3.1, Endianness: a module is a stream of words, and when it is stored as bytes each word is four octets in the byte
+order of the system that stored it. Little-endian: the lowest-order octet of each word first. -/
+def littleEndianBytes (ws : List Word) : List Byte := ws.flatMap octets
+
+/-- Big-endian: the highest-order octet of each word first. "The magic number is used to detect endianness." -/
+def bigEndianBytes (ws : List Word) : List Byte := ws.flatMap fun w => (octets w).reverse
 
 /-- Octets "packed four per word", the final word padded with 0 (2.2.1, Literal). -/
 def packOctets : List Byte → List Word

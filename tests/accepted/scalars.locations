@@ -1,0 +1,10 @@
+23	Scalars	0	a	0	u8
+23	Scalars	1	b	8	f64
+23	Scalars	2	c	16	i16
+23	Scalars	3	d	20	i32
+23	Scalars	4	e	24	i64
+23	Scalars	5	f	32	f32
+23	Scalars	6	g	36	u16
+23	Scalars	7	h	40	u32
+23	Scalars	8	i	44	i8
+23	Scalars	9	j	48	u64

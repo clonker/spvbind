@@ -1,0 +1,8 @@
+19	Outer/Middle/Inner	0/0/0	m/a/x	0	f32
+19	Outer/Middle/Inner	0/0/1	m/a/y	8	f64
+19	Outer/Middle	0/1	m/b	16	i32
+19	Outer/Middle/Inner	0/2/0	m/c/x	24	f32
+19	Outer/Middle/Inner	0/2/1	m/c/y	32	f64
+19	Outer/Inner	1/0	i/x	40	f32
+19	Outer/Inner	1/1	i/y	48	f64
+19	Outer	2	n	56	u32

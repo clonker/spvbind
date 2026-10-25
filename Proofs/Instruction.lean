@@ -9,37 +9,10 @@ import Proofs.Binary
 namespace Proofs
 
 open Spvbind
-open Spec (Word Byte LiteralString wordOfOctets packOctets Decoration modelledDecorations OpName OpMemberName OpTypeInt
-  OpTypeFloat OpTypeStruct OpTypePointer OpVariable OpMemberDecorate modelled Instruction Module)
+open Spec (Word Byte octets LiteralString wordOfOctets packOctets Decoration modelledDecorations OpName OpMemberName
+  OpTypeInt OpTypeFloat OpTypeStruct OpTypePointer OpVariable OpMemberDecorate modelled Instruction Module)
 
-/-! Octets of a word, and literal strings. -/
-
-theorem toNat_wordOfOctets (b0 b1 b2 b3 : Byte) :
-    (wordOfOctets b0 b1 b2 b3).toNat = b0.toNat + b1.toNat * 2 ^ 8 + b2.toNat * 2 ^ 16 + b3.toNat * 2 ^ 24 := by
-  have h0 := b0.toNat_lt; have h1 := b1.toNat_lt; have h2 := b2.toNat_lt; have h3 := b3.toNat_lt
-  simp only [wordOfOctets, UInt32.toNat_or, UInt32.toNat_shiftLeft, UInt8.toNat_toUInt32, UInt32.reduceToNat,
-    Nat.reduceMod]
-  have m1 : b1.toNat <<< 8 % 2 ^ 32 = b1.toNat <<< 8 := Nat.mod_eq_of_lt (by rw [Nat.shiftLeft_eq]; omega)
-  have m2 : b2.toNat <<< 16 % 2 ^ 32 = b2.toNat <<< 16 := Nat.mod_eq_of_lt (by rw [Nat.shiftLeft_eq]; omega)
-  have m3 : b3.toNat <<< 24 % 2 ^ 32 = b3.toNat <<< 24 := Nat.mod_eq_of_lt (by rw [Nat.shiftLeft_eq]; omega)
-  have e1 : b0.toNat ||| b1.toNat <<< 8 = b1.toNat * 2 ^ 8 + b0.toNat := by
-    rw [Nat.or_comm, ← Nat.shiftLeft_add_eq_or_of_lt h0, Nat.shiftLeft_eq]
-  have e2 : b1.toNat * 2 ^ 8 + b0.toNat ||| b2.toNat <<< 16 = b2.toNat * 2 ^ 16 + (b1.toNat * 2 ^ 8 + b0.toNat) := by
-    rw [Nat.or_comm, ← Nat.shiftLeft_add_eq_or_of_lt (by omega), Nat.shiftLeft_eq]
-  have e3 : b2.toNat * 2 ^ 16 + (b1.toNat * 2 ^ 8 + b0.toNat) ||| b3.toNat <<< 24 =
-      b3.toNat * 2 ^ 24 + (b2.toNat * 2 ^ 16 + (b1.toNat * 2 ^ 8 + b0.toNat)) := by
-    rw [Nat.or_comm, ← Nat.shiftLeft_add_eq_or_of_lt (by omega), Nat.shiftLeft_eq]
-  rw [m1, m2, m3, e1, e2, e3]
-  omega
-
-theorem octets_wordOfOctets (b0 b1 b2 b3 : Byte) : octets (wordOfOctets b0 b1 b2 b3) = [b0, b1, b2, b3] := by
-  have h := toNat_wordOfOctets b0 b1 b2 b3
-  have h0 := b0.toNat_lt; have h1 := b1.toNat_lt; have h2 := b2.toNat_lt; have h3 := b3.toNat_lt
-  simp only [octets, List.cons.injEq, and_true]
-  refine ⟨?_, ?_, ?_, ?_⟩ <;> apply UInt8.toNat_inj.mp <;>
-    simp only [UInt32.toNat_toUInt8, UInt32.toNat_shiftRight, UInt32.reduceToNat, Nat.reduceMod,
-      Nat.shiftRight_eq_div_pow, h] <;> omega
-
+/-! Literal strings. -/
 
 theorem octets_packOctets (bs : List Byte) :
     ∃ z, (packOctets bs).flatMap octets = bs ++ z ∧ ∀ x ∈ z, x = 0 := by
@@ -249,5 +222,31 @@ theorem decode_eq_ok (ws : List Word) (m : Module) :
   · rintro ⟨rfl, hf⟩
     simp only [decode, Module.words, (decodeHeader_eq_ok _ m.header _).mpr rfl,
       decodeInstructions_words _ hf, bind, Except.bind, pure, Except.pure]
+
+theorem bind_eq_ok {ε α β : Type} (x : Except ε α) (f : α → Except ε β) (b : β) :
+    (x >>= f) = .ok b ↔ ∃ a, x = .ok a ∧ f a = .ok b := by
+  cases x <;> simp [bind, Except.bind]
+
+/-- Reading a file and decoding it accepts exactly the little-endian or big-endian storage of a module whose
+instructions' word counts fit. -/
+theorem words_decode_eq_ok (bytes : ByteArray) (m : Module) :
+    (words bytes >>= decode) = .ok m ↔
+      (bytes.toList = Spec.littleEndianBytes m.words ∨ bytes.toList = Spec.bigEndianBytes m.words) ∧
+        ∀ i ∈ m.instructions, i.Fits := by
+  rw [bind_eq_ok]
+  constructor
+  · rintro ⟨ws, hw, hd⟩
+    obtain ⟨rfl, hf⟩ := (decode_eq_ok ws m).mp hd
+    refine ⟨?_, hf⟩
+    rcases (words_eq_ok bytes m.words).mp hw with ⟨hb, _⟩ | ⟨hb, _⟩
+    · exact .inl hb
+    · exact .inr hb
+  · rintro ⟨hb, hf⟩
+    refine ⟨m.words, ?_, (decode_eq_ok _ _).mpr ⟨rfl, hf⟩⟩
+    have hhead : m.words.head? = some Spec.magic := by simp [Module.words, Spec.Header.words]
+    rw [words_eq_ok]
+    rcases hb with hb | hb
+    · exact .inl ⟨hb, by rw [hhead]; simpa using magic_ne_byteReverse⟩
+    · exact .inr ⟨hb, hhead⟩
 
 end Proofs

@@ -1,0 +1,34 @@
+#version 460
+
+layout(local_size_x = 1) in;
+
+// Three levels of nesting; Inner is used three times and must be printed once.
+struct Inner
+{
+    float x;
+    double y;
+};
+
+struct Middle
+{
+    Inner a;
+    int b;
+    Inner c;
+};
+
+layout(push_constant) uniform Outer
+{
+    Middle m;
+    Inner i;
+    uint n;
+};
+
+layout(set = 0, binding = 0) buffer Out
+{
+    uint words[];
+};
+
+void main()
+{
+    words[0] = n;
+}

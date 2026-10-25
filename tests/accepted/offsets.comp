@@ -1,0 +1,21 @@
+#version 460
+
+layout(local_size_x = 1) in;
+
+// Explicit offsets with gaps, which become explicit padding.
+layout(push_constant) uniform Gaps
+{
+    layout(offset = 16) float a;
+    layout(offset = 64) double b;
+    layout(offset = 100) uint c;
+};
+
+layout(set = 0, binding = 0) buffer Out
+{
+    uint words[];
+};
+
+void main()
+{
+    words[0] = c;
+}

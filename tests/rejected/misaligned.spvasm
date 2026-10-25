@@ -1,0 +1,25 @@
+; A double at an offset that is not a multiple of 8.
+; target-env: vulkan1.3
+               OpCapability Shader
+               OpCapability Float64
+               OpMemoryModel Logical GLSL450
+               OpEntryPoint GLCompute %main "main" %pc
+               OpExecutionMode %main LocalSize 1 1 1
+               OpName %S "S"
+               OpMemberName %S 0 "x"
+               OpMemberName %S 1 "y"
+               OpName %pc ""
+               OpDecorate %S Block
+               OpMemberDecorate %S 0 Offset 0
+               OpMemberDecorate %S 1 Offset 4
+       %void = OpTypeVoid
+         %fn = OpTypeFunction %void
+      %float = OpTypeFloat 32
+          %double = OpTypeFloat 64
+          %S = OpTypeStruct %float %double
+        %ptr = OpTypePointer PushConstant %S
+         %pc = OpVariable %ptr PushConstant
+       %main = OpFunction %void None %fn
+      %label = OpLabel
+               OpReturn
+               OpFunctionEnd

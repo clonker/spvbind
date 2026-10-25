@@ -441,4 +441,19 @@ theorem generate_correct (ws : List Word) (out : List (Id × Ty)) (h : generate 
       cases eq_of_nodup_filterMap hnd hptr hip rfl rfl
       exact hl
 
+/-- `generate_correct` for the bytes of a file, as `Main.lean` runs it: the input is the little-endian or big-endian
+storage of the module. -/
+theorem generate_correct_of_bytes (bytes : ByteArray) (out : List (Id × Ty))
+    (h : (words bytes >>= generate) = .ok out) :
+    ∃ m : Module, (bytes.toList = Spec.littleEndianBytes m.words ∨ bytes.toList = Spec.bigEndianBytes m.words) ∧
+      (out.map Prod.fst).Nodup ∧
+      (∀ v, v ∈ out.map Prod.fst ↔ Spec.PushConstantVariable m v) ∧
+      ∀ v c, (v, c) ∈ out → ∀ l, l ∈ c.locations ↔ VariableLocated m v l := by
+  obtain ⟨ws, hw, hg⟩ := (bind_eq_ok _ _ _).mp h
+  obtain ⟨m, rfl, h1, h2, h3⟩ := generate_correct ws out hg
+  refine ⟨m, ?_, h1, h2, h3⟩
+  rcases (words_eq_ok bytes m.words).mp hw with ⟨hb, _⟩ | ⟨hb, _⟩
+  · exact .inl hb
+  · exact .inr hb
+
 end Proofs

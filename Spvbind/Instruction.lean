@@ -7,12 +7,8 @@ import Spvbind.Binary
 
 namespace Spvbind
 
-open Spec (Word Byte LiteralString Offset modelledDecorations Decoration OpName OpMemberName OpTypeInt OpTypeFloat
-  OpTypeStruct OpTypePointer OpVariable OpMemberDecorate modelled Instruction Module)
-
-/-- The four octets of a word, the first from the lowest-order 8 bits. -/
-def octets (w : Word) : List Byte :=
-  [w.toUInt8, (w >>> 8).toUInt8, (w >>> 16).toUInt8, (w >>> 24).toUInt8]
+open Spec (Word Byte octets LiteralString Offset modelledDecorations Decoration OpName OpMemberName OpTypeInt
+  OpTypeFloat OpTypeStruct OpTypePointer OpVariable OpMemberDecorate modelled Instruction Module)
 
 /-- A literal string at the start of `ws`, and the words after it. The octets up to the first 0 are the string; the
 words it was read from must be exactly the string's words, which also checks the padding. -/
@@ -103,6 +99,38 @@ def decodeInstructions : List Word → Except String (List Instruction)
       | .ok i => (i :: ·) <$> decodeInstructions (ws.drop ((w >>> 16).toNat - 1))
       | .error e => .error e
 termination_by ws => ws.length
+
+/-- `decodeInstructions`, iteratively, which the compiler uses instead (`@[csimp]`, see `Spvbind/Binary.lean`). -/
+def decodeInstructionsTR (ws : List Word) : Except String (List Instruction) := go ws #[]
+where
+  go : List Word → Array Instruction → Except String (List Instruction)
+    | [], acc => .ok acc.toList
+    | w :: ws, acc =>
+      if (w >>> 16).toNat = 0 then .error s!"instruction with opcode enumerant {w.toUInt16} has word count 0"
+      else if (ws.take ((w >>> 16).toNat - 1)).length < (w >>> 16).toNat - 1 then
+        .error s!"instruction with opcode enumerant {w.toUInt16} has word count {(w >>> 16).toNat}, past the end of \
+          the module"
+      else
+        match decodeOperands w.toUInt16 (ws.take ((w >>> 16).toNat - 1)) with
+        | .ok i => go (ws.drop ((w >>> 16).toNat - 1)) (acc.push i)
+        | .error e => .error e
+  termination_by ws _ => ws.length
+
+theorem decodeInstructionsTR_go (ws : List Word) (acc : Array Instruction) :
+    decodeInstructionsTR.go ws acc = (acc.toList ++ ·) <$> decodeInstructions ws := by
+  fun_induction decodeInstructionsTR.go ws acc with
+  | case1 acc => simp [decodeInstructions, Functor.map, Except.map]
+  | case2 w ws acc h0 => rw [decodeInstructions]; simp only [h0, ↓reduceIte, Functor.map, Except.map]
+  | case3 w ws acc h0 hlen => rw [decodeInstructions]; simp only [h0, hlen, ↓reduceIte, Functor.map, Except.map]
+  | case4 w ws acc h0 hlen i hop ih =>
+    rw [decodeInstructions]
+    simp only [h0, hlen, hop, ↓reduceIte, ih]
+    cases decodeInstructions (ws.drop ((w >>> 16).toNat - 1)) <;> simp [Functor.map, Except.map]
+  | case5 w ws acc h0 hlen e he => rw [decodeInstructions]; simp only [h0, hlen, he, ↓reduceIte, Functor.map, Except.map]
+
+@[csimp] theorem decodeInstructions_eq_decodeInstructionsTR : @decodeInstructions = @decodeInstructionsTR := by
+  funext ws
+  cases h : decodeInstructions ws <;> simp [decodeInstructionsTR, decodeInstructionsTR_go, h, Functor.map, Except.map]
 
 /-- The module a stream of words consists of. -/
 def decode (ws : List Word) : Except String Module := do
