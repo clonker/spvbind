@@ -15,7 +15,7 @@ struct A
     float x;
 };
 static_assert(offsetof(A, x) == 0);
-static_assert(std::is_floating_point_v<decltype(A::x)> && std::numeric_limits<decltype(A::x)>::is_iec559 && sizeof(A::x) == 4);
+static_assert(std::is_floating_point_v<decltype(A::x)> && std::numeric_limits<decltype(A::x)>::is_iec559 && sizeof(decltype(A::x)) == 4);
 static_assert(sizeof(A) == 4);
 static_assert(alignof(A) == 4);
 
@@ -24,7 +24,7 @@ struct B
     float x;
 };
 static_assert(offsetof(B, x) == 0);
-static_assert(std::is_floating_point_v<decltype(B::x)> && std::numeric_limits<decltype(B::x)>::is_iec559 && sizeof(B::x) == 4);
+static_assert(std::is_floating_point_v<decltype(B::x)> && std::numeric_limits<decltype(B::x)>::is_iec559 && sizeof(decltype(B::x)) == 4);
 static_assert(sizeof(B) == 4);
 static_assert(alignof(B) == 4);
 

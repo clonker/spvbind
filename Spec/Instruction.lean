@@ -15,6 +15,7 @@ def OpName : UInt16 := 5
 def OpMemberName : UInt16 := 6
 def OpTypeInt : UInt16 := 21
 def OpTypeFloat : UInt16 := 22
+def OpTypeVector : UInt16 := 23
 def OpTypeStruct : UInt16 := 30
 def OpTypePointer : UInt16 := 32
 def OpVariable : UInt16 := 59
@@ -22,7 +23,8 @@ def OpMemberDecorate : UInt16 := 72
 
 /-- The opcode enumerants of the instructions modelled by `Instruction`. -/
 def modelled : List UInt16 :=
-  [OpName, OpMemberName, OpTypeInt, OpTypeFloat, OpTypeStruct, OpTypePointer, OpVariable, OpMemberDecorate]
+  [OpName, OpMemberName, OpTypeInt, OpTypeFloat, OpTypeVector, OpTypeStruct, OpTypePointer, OpVariable,
+   OpMemberDecorate]
 
 /-- Storage class enumerants (3.2.6, Storage Class). -/
 def PushConstant : Word := 9
@@ -57,6 +59,10 @@ inductive Instruction
   /-- OpTypeFloat (3.3.6): "Declare a new floating-point type." Without its optional Floating Point Encoding
   operand, which spvbind does not model, so that a module using it is not decoded. -/
   | typeFloat (result : Id) (width : Word)
+  /-- OpTypeVector (3.3.6): "Declare a new vector type. Component Type is the type of each component in the resulting
+  type. It must be a scalar type. Component Count is the number of components in the resulting type. It must be at
+  least 2." -/
+  | typeVector (result : Id) (componentType : Id) (componentCount : Word)
   /-- OpTypeStruct (3.3.6): "Declare a new structure type. Member N type is the type of member N of the
   structure." -/
   | typeStruct (result : Id) (members : List Id)
@@ -74,6 +80,7 @@ def Instruction.enumerant : Instruction → UInt16
   | .memberName .. => OpMemberName
   | .typeInt .. => OpTypeInt
   | .typeFloat .. => OpTypeFloat
+  | .typeVector .. => OpTypeVector
   | .typeStruct .. => OpTypeStruct
   | .typePointer .. => OpTypePointer
   | .var .. => OpVariable
@@ -86,6 +93,7 @@ def Instruction.operands : Instruction → List Word
   | .memberName type member s => type :: member :: s.words
   | .typeInt result width signedness => [result, width, signedness]
   | .typeFloat result width => [result, width]
+  | .typeVector result componentType componentCount => [result, componentType, componentCount]
   | .typeStruct result members => result :: members
   | .typePointer result storageClass type => [result, storageClass, type]
   | .var resultType result storageClass initializer => [resultType, result, storageClass] ++ initializer.toList

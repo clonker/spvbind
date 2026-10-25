@@ -18,8 +18,8 @@ struct Inner
 };
 static_assert(offsetof(Inner, x) == 0);
 static_assert(offsetof(Inner, y) == 8);
-static_assert(std::is_floating_point_v<decltype(Inner::x)> && std::numeric_limits<decltype(Inner::x)>::is_iec559 && sizeof(Inner::x) == 4);
-static_assert(std::is_floating_point_v<decltype(Inner::y)> && std::numeric_limits<decltype(Inner::y)>::is_iec559 && sizeof(Inner::y) == 8);
+static_assert(std::is_floating_point_v<decltype(Inner::x)> && std::numeric_limits<decltype(Inner::x)>::is_iec559 && sizeof(decltype(Inner::x)) == 4);
+static_assert(std::is_floating_point_v<decltype(Inner::y)> && std::numeric_limits<decltype(Inner::y)>::is_iec559 && sizeof(decltype(Inner::y)) == 8);
 static_assert(sizeof(Inner) == 16);
 static_assert(alignof(Inner) == 8);
 
@@ -33,7 +33,7 @@ struct Middle
 static_assert(offsetof(Middle, a) == 0);
 static_assert(offsetof(Middle, b) == 16);
 static_assert(offsetof(Middle, c) == 24);
-static_assert(std::is_integral_v<decltype(Middle::b)> && std::is_signed_v<decltype(Middle::b)> && sizeof(Middle::b) == 4);
+static_assert(std::is_integral_v<decltype(Middle::b)> && std::is_signed_v<decltype(Middle::b)> && sizeof(decltype(Middle::b)) == 4);
 static_assert(sizeof(Middle) == 40);
 static_assert(alignof(Middle) == 8);
 
@@ -46,6 +46,6 @@ struct Outer
 static_assert(offsetof(Outer, m) == 0);
 static_assert(offsetof(Outer, i) == 40);
 static_assert(offsetof(Outer, n) == 56);
-static_assert(std::is_integral_v<decltype(Outer::n)> && std::is_unsigned_v<decltype(Outer::n)> && sizeof(Outer::n) == 4);
+static_assert(std::is_integral_v<decltype(Outer::n)> && std::is_unsigned_v<decltype(Outer::n)> && sizeof(decltype(Outer::n)) == 4);
 static_assert(sizeof(Outer) == 64);
 static_assert(alignof(Outer) == 8);

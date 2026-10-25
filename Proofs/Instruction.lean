@@ -10,7 +10,7 @@ namespace Proofs
 
 open Spvbind
 open Spec (Word Byte octets LiteralString wordOfOctets packOctets Decoration modelledDecorations OpName OpMemberName
-  OpTypeInt OpTypeFloat OpTypeStruct OpTypePointer OpVariable OpMemberDecorate modelled Instruction Module)
+  OpTypeInt OpTypeFloat OpTypeVector OpTypeStruct OpTypePointer OpVariable OpMemberDecorate modelled Instruction Module)
 
 /-! Literal strings. -/
 
@@ -102,13 +102,13 @@ theorem decodeOperands_eq_ok (e : UInt16) (ops : List Word) (i : Instruction) :
     cases i with
     | var resultType result storageClass initializer =>
       cases initializer <;> simp [decodeOperands, Instruction.enumerant, Instruction.operands, OpName, OpMemberName,
-        OpTypeInt, OpTypeFloat, OpTypeStruct, OpTypePointer, OpVariable]
+        OpTypeInt, OpTypeFloat, OpTypeVector, OpTypeStruct, OpTypePointer, OpVariable]
     | other e ops h =>
       have h' := h
       simp only [modelled, List.mem_cons, List.not_mem_nil, or_false, not_or] at h'
       simp [decodeOperands, Instruction.enumerant, Instruction.operands, h', h]
     | _ => simp [decodeOperands, Instruction.enumerant, Instruction.operands, OpName, OpMemberName, OpTypeInt,
-        OpTypeFloat, OpTypeStruct, OpTypePointer, OpVariable, OpMemberDecorate, hs, hd]
+        OpTypeFloat, OpTypeVector, OpTypeStruct, OpTypePointer, OpVariable, OpMemberDecorate, hs, hd]
 
 
 /-! The first word of an instruction: its 16 high-order bits and its 16 low-order bits. -/

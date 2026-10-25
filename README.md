@@ -39,8 +39,8 @@ struct Params
 static_assert(offsetof(Params, count) == 0);
 static_assert(offsetof(Params, scale) == 8);
 static_assert(offsetof(Params, range) == 16);
-static_assert(std::is_integral_v<decltype(Params::count)> && std::is_unsigned_v<decltype(Params::count)> && sizeof(Params::count) == 4);
-static_assert(std::is_floating_point_v<decltype(Params::scale)> && std::numeric_limits<decltype(Params::scale)>::is_iec559 && sizeof(Params::scale) == 8);
+static_assert(std::is_integral_v<decltype(Params::count)> && std::is_unsigned_v<decltype(Params::count)> && sizeof(decltype(Params::count)) == 4);
+static_assert(std::is_floating_point_v<decltype(Params::scale)> && std::numeric_limits<decltype(Params::scale)>::is_iec559 && sizeof(decltype(Params::scale)) == 8);
 static_assert(sizeof(Params) == 24);
 static_assert(alignof(Params) == 8);
 ```
@@ -91,8 +91,9 @@ lake build                                        # the executable and all proof
 ```
 
 The module must be compiled without optimization (`glslc` without `-O`), which would remove the names, and be SPIR-V
-1.4 or later (`--target-env=vulkan1.2` or later). For now only push constant blocks of integers, floats and nested
-structs are supported, with members in offset order; anything else is rejected with a message naming the member.
+1.4 or later (`--target-env=vulkan1.2` or later). For now only push constant blocks of integers, floats, vectors of
+them (as `std::array`) and nested structs are supported, with members in offset order; anything else is rejected with
+a message naming the member.
 
 ## Tests
 

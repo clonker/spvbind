@@ -9,7 +9,9 @@ and Stride Assignment" (Push Constant Interface). So where each scalar is follow
 layout rules (std430 and the others) only constrain which decorations are valid.
 
 SPIR-V specification, version 1.6, revision 8: 3.2.19 Decoration, Offset: "It dictates the byte offset of the member
-relative to the beginning of the structure."
+relative to the beginning of the structure." Vectors have no decoration: their components follow each other, each the
+size of the component type (Vulkan, Offset and Stride Assignment: a vector "has a scalar alignment equal to that of its
+component type", and a matrix is "equivalent to a C element array of vectors with R components").
 -/
 
 namespace Spec
@@ -21,13 +23,18 @@ inductive Scalar
   | float (width : Word)
   deriving DecidableEq, Repr
 
+/-- The size of a scalar in bytes, its width in bits divided by 8 (Vulkan, Offset and Stride Assignment: "A scalar of
+size N"). -/
+def Scalar.bytes : Scalar → Nat
+  | .int width _ => width.toNat / 8
+  | .float width => width.toNat / 8
+
 /-- One step of a path: member `index` of a structure, with the structure's name (OpName) and the member's
-(OpMemberName). Names are only debug information to SPIR-V (2.15), but they are how C++ reaches each scalar, so a
-location includes them. -/
-structure Step where
-  struct : String
-  index : Nat
-  member : String
+(OpMemberName), or element `index` of a vector. Names are only debug information to SPIR-V (2.15), but they are how C++
+reaches each scalar, so a location includes them. -/
+inductive Step
+  | member (struct : String) (index : Nat) (name : String)
+  | element (index : Nat)
   deriving DecidableEq, Repr
 
 /-- A scalar in a value: `path` selects it, one step per level, and it is `offset` bytes from the start of the
@@ -60,7 +67,13 @@ inductive Located (m : Module) : Id → Location → Prop
       .name type structName ∈ m.instructions → .memberName type member memberName ∈ m.instructions →
       Located m memberType l →
       Located m type
-        ⟨⟨structName.value, member.toNat, memberName.value⟩ :: l.path, byteOffset.toNat + l.offset, l.scalar⟩
+        ⟨.member structName.value member.toNat memberName.value :: l.path, byteOffset.toNat + l.offset, l.scalar⟩
+  /-- Component `component` of a vector is a scalar of the component type, `component` times its size from the start
+  of the vector. -/
+  | component {type componentType : Id} {count component : Word} {s : Scalar} :
+      .typeVector type componentType count ∈ m.instructions → component < count →
+      Located m componentType ⟨[], 0, s⟩ →
+      Located m type ⟨[.element component.toNat], component.toNat * s.bytes, s⟩
 
 /-- `VariableLocated m v l`: the same, in the object that variable `v` points to. OpVariable (3.3.8): "Result Type
 must be an OpTypePointer. Its Type operand is the type of object in memory." -/

@@ -1,4 +1,4 @@
-; A vector member: not supported yet.
+; A vector of one component: SPIR-V requires at least 2.
 ; target-env: vulkan1.3
                OpCapability Shader
                OpMemoryModel Logical GLSL450
@@ -12,8 +12,8 @@
        %void = OpTypeVoid
          %fn = OpTypeFunction %void
       %float = OpTypeFloat 32
-          %v4 = OpTypeVector %float 4
-          %S = OpTypeStruct %v4
+        %v1 = OpTypeVector %float 1
+          %S = OpTypeStruct %v1
         %ptr = OpTypePointer PushConstant %S
          %pc = OpVariable %ptr PushConstant
        %main = OpFunction %void None %fn

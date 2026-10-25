@@ -8,7 +8,7 @@ import Spvbind.Binary
 namespace Spvbind
 
 open Spec (Word Byte octets LiteralString Offset modelledDecorations Decoration OpName OpMemberName OpTypeInt
-  OpTypeFloat OpTypeStruct OpTypePointer OpVariable OpMemberDecorate modelled Instruction Module)
+  OpTypeFloat OpTypeVector OpTypeStruct OpTypePointer OpVariable OpMemberDecorate modelled Instruction Module)
 
 /-- A literal string at the start of `ws`, and the words after it. The octets up to the first 0 are the string; the
 words it was read from must be exactly the string's words, which also checks the padding. -/
@@ -62,6 +62,10 @@ def decodeOperands (e : UInt16) (ops : List Word) : Except String Instruction :=
     match ops with
     | [result, width] => .ok (.typeFloat result width)
     | _ => .error "OpTypeFloat without exactly two operands; the Floating Point Encoding operand is not supported"
+  else if e = OpTypeVector then
+    match ops with
+    | [result, componentType, componentCount] => .ok (.typeVector result componentType componentCount)
+    | _ => .error "OpTypeVector without exactly three operands"
   else if e = OpTypeStruct then
     match ops with
     | result :: members => .ok (.typeStruct result members)

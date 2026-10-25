@@ -22,8 +22,8 @@ struct Gaps
 static_assert(offsetof(Gaps, a) == 16);
 static_assert(offsetof(Gaps, b) == 64);
 static_assert(offsetof(Gaps, c) == 100);
-static_assert(std::is_floating_point_v<decltype(Gaps::a)> && std::numeric_limits<decltype(Gaps::a)>::is_iec559 && sizeof(Gaps::a) == 4);
-static_assert(std::is_floating_point_v<decltype(Gaps::b)> && std::numeric_limits<decltype(Gaps::b)>::is_iec559 && sizeof(Gaps::b) == 8);
-static_assert(std::is_integral_v<decltype(Gaps::c)> && std::is_unsigned_v<decltype(Gaps::c)> && sizeof(Gaps::c) == 4);
+static_assert(std::is_floating_point_v<decltype(Gaps::a)> && std::numeric_limits<decltype(Gaps::a)>::is_iec559 && sizeof(decltype(Gaps::a)) == 4);
+static_assert(std::is_floating_point_v<decltype(Gaps::b)> && std::numeric_limits<decltype(Gaps::b)>::is_iec559 && sizeof(decltype(Gaps::b)) == 8);
+static_assert(std::is_integral_v<decltype(Gaps::c)> && std::is_unsigned_v<decltype(Gaps::c)> && sizeof(decltype(Gaps::c)) == 4);
 static_assert(sizeof(Gaps) == 104);
 static_assert(alignof(Gaps) == 8);

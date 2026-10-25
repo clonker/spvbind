@@ -98,6 +98,7 @@ theorem located_of_typeInt {t w s : Word} (hi : .typeInt t w s ∈ m.instruction
     | signed hi' => cases eq_of_nodup_filterMap hnd hi' hi rfl rfl; simp
     | float hi' => cases eq_of_nodup_filterMap hnd hi' hi rfl rfl
     | member hs => cases eq_of_nodup_filterMap hnd hs hi rfl rfl
+    | component hv => cases eq_of_nodup_filterMap hnd hv hi rfl rfl
   · rintro (⟨rfl, rfl⟩ | ⟨rfl, rfl⟩)
     · exact .unsigned hi
     · exact .signed hi
@@ -111,6 +112,7 @@ theorem located_of_typeFloat {t w : Word} (hi : .typeFloat t w ∈ m.instruction
     | signed hi' => cases eq_of_nodup_filterMap hnd hi' hi rfl rfl
     | float hi' => cases eq_of_nodup_filterMap hnd hi' hi rfl rfl; rfl
     | member hs => cases eq_of_nodup_filterMap hnd hs hi rfl rfl
+    | component hv => cases eq_of_nodup_filterMap hnd hv hi rfl rfl
   · rintro rfl
     exact .float hi
 
@@ -118,7 +120,8 @@ theorem located_of_typeStruct {t : Id} {all : List Id} (hs : .typeStruct t all �
     Located m t l ↔ ∃ (member byteOffset : Word) (u : Id) (l' : Location) (structName memberName : LiteralString),
       all[member.toNat]? = some u ∧ .memberDecorate t member (.offset byteOffset) ∈ m.instructions ∧
       .name t structName ∈ m.instructions ∧ .memberName t member memberName ∈ m.instructions ∧ Located m u l' ∧
-      l = ⟨⟨structName.value, member.toNat, memberName.value⟩ :: l'.path, byteOffset.toNat + l'.offset, l'.scalar⟩ := by
+      l = ⟨.member structName.value member.toNat memberName.value :: l'.path, byteOffset.toNat + l'.offset,
+        l'.scalar⟩ := by
   constructor
   · intro h
     cases h with
@@ -128,8 +131,25 @@ theorem located_of_typeStruct {t : Id} {all : List Id} (hs : .typeStruct t all �
     | member hs' hu hd hn hmn hl =>
       cases eq_of_nodup_filterMap hnd hs' hs rfl rfl
       exact ⟨_, _, _, _, _, _, hu, hd, hn, hmn, hl, rfl⟩
+    | component hv => cases eq_of_nodup_filterMap hnd hv hs rfl rfl
   · rintro ⟨member, byteOffset, u, l', structName, memberName, hu, hd, hn, hmn, hl, rfl⟩
     exact .member hs hu hd hn hmn hl
+
+theorem located_of_typeVector {t ct : Id} {n : Word} (hv : .typeVector t ct n ∈ m.instructions) (l : Location) :
+    Located m t l ↔ ∃ (k : Word) (s : Spec.Scalar), k < n ∧ Located m ct ⟨[], 0, s⟩ ∧
+      l = ⟨[.element k.toNat], k.toNat * s.bytes, s⟩ := by
+  constructor
+  · intro h
+    cases h with
+    | unsigned hi => cases eq_of_nodup_filterMap hnd hi hv rfl rfl
+    | signed hi => cases eq_of_nodup_filterMap hnd hi hv rfl rfl
+    | float hi => cases eq_of_nodup_filterMap hnd hi hv rfl rfl
+    | member hs => cases eq_of_nodup_filterMap hnd hs hv rfl rfl
+    | component hv' hk hl =>
+      cases eq_of_nodup_filterMap hnd hv' hv rfl rfl
+      exact ⟨_, _, hk, hl, rfl⟩
+  · rintro ⟨k, s, hk, hl, rfl⟩
+    exact .component hv hk hl
 
 end
 
@@ -157,7 +177,7 @@ theorem locations_members {m : Module} {ctx : Context} {types : Types} {t : Id} 
           k ≤ member.toNat ∧ all[member.toNat]? = some u ∧
           .memberDecorate t member (.offset byteOffset) ∈ m.instructions ∧ .name t structName ∈ m.instructions ∧
           .memberName t member memberName ∈ m.instructions ∧ Located m u l' ∧
-          l = ⟨⟨structName.value, member.toNat, memberName.value⟩ :: l'.path, byteOffset.toNat + l'.offset,
+          l = ⟨.member structName.value member.toNat memberName.value :: l'.path, byteOffset.toNat + l'.offset,
             l'.scalar⟩ := by
   intro us
   induction us with
@@ -282,6 +302,32 @@ theorem correct_addType {m : Module} {ctx : Context} {types : Types} {i : Instru
     subst hrt
     simp only [Option.some.injEq] at ht
     exact locations_struct hf hc hi ht l
+  case typeVector r ct n =>
+    simp only [addType, HashMap.getElem?_insert, beq_iff_eq] at ht
+    split at ht
+    case isFalse => exact hc t c ht l
+    rename_i hrt
+    subst hrt
+    simp only [Option.some.injEq] at ht
+    rw [located_of_typeVector hf.results hi l]
+    unfold vector at ht
+    split at ht
+    case h_1 s hct =>
+      split at ht
+      case isFalse => cases ht
+      cases ht
+      have hs : ∀ s', Located m ct ⟨[], 0, s'⟩ ↔ s' = s := fun s' => by
+        rw [← hc ct (.scalar s) hct]
+        simp [Ty.locations]
+      have hn := n.toNat_lt
+      simp only [Ty.locations, Ty.size, List.mem_flatMap, List.mem_range, List.mem_map, List.mem_singleton, hs]
+      constructor
+      · rintro ⟨i, hi, l', rfl, rfl⟩
+        exact ⟨i.toUInt32, s, UInt32.lt_iff_toNat_lt.mpr (by rw [toNat_toUInt32 (by omega)]; exact hi), rfl,
+          by rw [toNat_toUInt32 (by omega)]; simp⟩
+      · rintro ⟨k, _, hk, rfl, rfl⟩
+        exact ⟨k.toNat, UInt32.lt_iff_toNat_lt.mp hk, _, rfl, by simp⟩
+    all_goals cases ht
   all_goals exact hc t c ht l
 
 theorem correct_foldl {m : Module} {ctx : Context} (hf : Facts m ctx) :

@@ -27,7 +27,8 @@ where
 
 /-- The id an instruction spvbind reads defines. -/
 def result? : Instruction → Option Id
-  | .typeInt result .. | .typeFloat result .. | .typeStruct result .. | .typePointer result .. => some result
+  | .typeInt result .. | .typeFloat result .. | .typeVector result .. | .typeStruct result ..
+  | .typePointer result .. => some result
   | .var _ result .. => some result
   | _ => none
 
@@ -104,6 +105,15 @@ def float (width : Word) : Except String Ty :=
   if width = 32 ∨ width = 64 then .ok (.scalar (.float width))
   else .error s!"{width}-bit floating-point numbers are not supported"
 
+/-- A vector type, in C++ a `std::array` of its component type, which must be a scalar. -/
+def vector (types : Types) (componentType : Id) (count : Word) : Except String Ty :=
+  match types[componentType]? with
+  | some (.ok (.scalar s)) =>
+    if 2 ≤ count then .ok (.array (.scalar s) count.toNat) else .error s!"a vector of {count} components"
+  | some (.ok _) => .error "a vector whose component type is not a scalar"
+  | some (.error e) => .error s!"vector component: {e}"
+  | none => .error "a vector of a type spvbind does not support"
+
 /-- The members of struct `type` from member `index` on, whose types are `memberTypes`, starting at byte `start`.
 Each is placed at its Offset, after explicit padding; one that overlaps the member before it, or whose Offset is not
 aligned for its C++ type, is an error. -/
@@ -146,6 +156,7 @@ def struct (ctx : Context) (types : Types) (type : Id) (memberTypes : List Id) :
 def addType (ctx : Context) (types : Types) : Instruction → Types
   | .typeInt result width signedness => types.insert result (int width signedness)
   | .typeFloat result width => types.insert result (float width)
+  | .typeVector result componentType count => types.insert result (vector types componentType count)
   | .typeStruct result memberTypes => types.insert result (struct ctx types result memberTypes)
   | _ => types
 

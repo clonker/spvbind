@@ -1,0 +1,40 @@
+#version 460
+#extension GL_EXT_shader_explicit_arithmetic_types : require
+#extension GL_EXT_shader_8bit_storage : require
+#extension GL_EXT_shader_16bit_storage : require
+
+layout(local_size_x = 1) in;
+
+// Vectors of every supported scalar, as std::array. A vec3 is 16-aligned in std430 but 12 bytes long, so there is
+// padding before it and after it.
+struct Light
+{
+    vec3 position;
+    float intensity;
+    vec3 color;
+};
+
+layout(push_constant) uniform Vectors
+{
+    vec2 a;
+    vec3 b;
+    vec4 c;
+    dvec2 d;
+    ivec3 e;
+    uvec4 f;
+    i8vec4 g;
+    u16vec2 h;
+    i64vec2 i;
+    Light light;
+    layout(offset = 176) vec3 tail;
+} pc;
+
+layout(set = 0, binding = 0) buffer Out
+{
+    uint words[];
+};
+
+void main()
+{
+    words[0] = uint(pc.c.x + pc.light.color.y + pc.tail.z);
+}

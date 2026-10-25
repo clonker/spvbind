@@ -28,6 +28,7 @@ MODEL = {
     'OpMemberName': ['IdRef', 'LiteralInteger', 'LiteralString'],
     'OpTypeInt': ['IdResult', 'LiteralInteger', 'LiteralInteger'],
     'OpTypeFloat': ['IdResult', 'LiteralInteger'],
+    'OpTypeVector': ['IdResult', 'IdRef', 'LiteralInteger'],
     'OpTypeStruct': ['IdResult', 'IdRef*'],
     'OpTypePointer': ['IdResult', 'StorageClass', 'IdRef'],
     'OpVariable': ['IdResultType', 'IdResult', 'StorageClass', 'IdRef?'],
