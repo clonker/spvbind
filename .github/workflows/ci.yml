@@ -18,3 +18,16 @@ jobs:
         with:
           leanchecker: true
           leanchecker-args: Spec Spvbind Proofs Guarantees
+      - name: Example from the committed module
+        run: .lake/build/bin/spvbind examples/params.spv | diff -u examples/params.hpp -
+      - name: Example compiled with glslc
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends glslc
+          glslc --target-env=vulkan1.3 -o examples/params.spv examples/params.comp
+          .lake/build/bin/spvbind examples/params.spv | diff -u examples/params.hpp -
+      - name: The header compiles
+        run: |
+          for cxx in g++ clang++; do
+            echo '#include "params.hpp"' | $cxx -std=c++20 -Wall -Wextra -Werror -fsyntax-only -I examples -x c++ -
+          done
