@@ -112,7 +112,8 @@ FUZZ_TEST(Differential, OracleAgreesOnBytes).WithDomains(fuzztest::Arbitrary<std
 // most are valid SPIR-V that spvbind accepts; coverage then guides it to the layouts that matter.
 
 struct Member {
-    uint8_t kind;  // < 10: a scalar (kScalars); otherwise an earlier struct, by (kind - 10) % their number
+    uint8_t kind;  // < 10: a scalar (kScalars); < 40: a vector of scalar (kind - 10) % 10 with 2 + (kind - 10) / 10
+                   // components; otherwise an earlier struct, by (kind - 40) % their number
     uint8_t gap;   // extra alignments of padding before the member
 };
 struct StructDesc {
@@ -144,7 +145,8 @@ constexpr ScalarKind kScalars[10] = {{'f', 32}, {'f', 64}, {'i', 32}, {'u', 32},
 constexpr uint32_t kMagic = 0x07230203;
 enum Op : uint32_t {
     OpName = 5, OpMemberName = 6, OpMemoryModel = 14, OpEntryPoint = 15, OpExecutionMode = 16, OpCapability = 17,
-    OpTypeVoid = 19, OpTypeInt = 21, OpTypeFloat = 22, OpTypeStruct = 30, OpTypePointer = 32, OpTypeFunction = 33,
+    OpTypeVoid = 19, OpTypeInt = 21, OpTypeFloat = 22, OpTypeVector = 23, OpTypeStruct = 30, OpTypePointer = 32,
+    OpTypeFunction = 33,
     OpFunction = 54, OpFunctionEnd = 56, OpVariable = 59, OpDecorate = 71, OpMemberDecorate = 72, OpLabel = 248,
     OpReturn = 253,
 };
@@ -186,20 +188,26 @@ std::string encode(const Interface& interface) {
     std::vector<uint32_t> ids;
     auto fresh = [&] { ids.push_back(nextId); return nextId++; };
     const size_t nStructs = interface.structs.size();
-    std::vector<uint32_t> scalarIds(10, 0);
+    std::vector<uint32_t> scalarIds(10, 0), vectorIds(30, 0);  // vector slot v: scalar v % 10, 2 + v / 10 components
     std::vector<uint32_t> structIds(nStructs);
     for (auto& s : structIds) s = fresh();
     uint32_t pointer = fresh(), variable = fresh(), main = fresh(), voidType = fresh(), fnType = fresh(), label = fresh();
     uint32_t other = fresh(), decoyPointer = fresh(), decoyVariable = fresh();
-    // Resolve member kinds and collect the scalars used.
-    struct Resolved { bool isStruct; uint32_t index; };
+    // Resolve member kinds and collect the scalars and vectors used.
+    enum Kind : uint8_t { kScalar, kVector, kStruct };
+    struct Resolved { Kind kind; uint32_t index; };  // a scalar kind, a vector slot, or a struct index
     std::vector<std::vector<Resolved>> resolved(nStructs);
     for (size_t i = 0; i < nStructs; ++i)
         for (const Member& m : interface.structs[i].members) {
-            if (m.kind >= 10 && i > 0) resolved[i].push_back({true, (uint32_t)((m.kind - 10) % i)});
-            else {
+            if (m.kind >= 40 && i > 0) resolved[i].push_back({kStruct, (uint32_t)((m.kind - 40) % i)});
+            else if (m.kind >= 10 && m.kind < 40) {
+                uint32_t v = m.kind - 10;
+                resolved[i].push_back({kVector, v});
+                if (!scalarIds[v % 10]) scalarIds[v % 10] = fresh();
+                if (!vectorIds[v]) vectorIds[v] = fresh();
+            } else {
                 uint32_t k = m.kind % 10;
-                resolved[i].push_back({false, k});
+                resolved[i].push_back({kScalar, k});
                 if (!scalarIds[k]) scalarIds[k] = fresh();
             }
         }
@@ -224,6 +232,8 @@ std::string encode(const Interface& interface) {
         if (s.width == 8) capabilities.push_back(CapStoragePushConstant8);
         if (s.width == 16) capabilities.push_back(CapStoragePushConstant16);
     }
+    for (uint32_t v = 0; v < 30; ++v)
+        if (vectorIds[v]) append(types, op(OpTypeVector, {id(vectorIds[v]), id(scalarIds[v % 10]), 2 + v / 10}));
     std::vector<std::pair<uint32_t, uint32_t>> placed(nStructs);  // (alignment, size) of each struct as laid out
     for (size_t i = 0; i < nStructs; ++i) {
         const bool isBlock = i + 1 == nStructs;
@@ -233,8 +243,14 @@ std::string encode(const Interface& interface) {
         for (size_t j = 0; j < resolved[i].size(); ++j) {
             const Resolved& m = resolved[i][j];
             uint32_t a, size;
-            if (m.isStruct) { a = placed[m.index].first; size = placed[m.index].second; structOp.push_back(id(structIds[m.index])); }
-            else { a = size = kScalars[m.index].width / 8; structOp.push_back(id(scalarIds[m.index])); }
+            if (m.kind == kStruct) { a = placed[m.index].first; size = placed[m.index].second; structOp.push_back(id(structIds[m.index])); }
+            else if (m.kind == kVector) {
+                // std430: a two-component vector is aligned to twice its component, three or four to four times.
+                uint32_t component = kScalars[m.index % 10].width / 8, count = 2 + m.index / 10;
+                a = scalarLayout ? component : component * (count == 2 ? 2 : 4);
+                size = count * component;
+                structOp.push_back(id(vectorIds[m.index]));
+            } else { a = size = kScalars[m.index].width / 8; structOp.push_back(id(scalarIds[m.index])); }
             uint32_t offset = alignUp(cursor, a) + a * interface.structs[i].members[j].gap;
             offsets.push_back(offset);
             cursor = offset + size;

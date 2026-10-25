@@ -7,8 +7,8 @@ module, ask both where every scalar is, and compare. The subject here is [SPIRV-
 ## The format
 
 `spvbind --locations module.spv` prints one line per scalar, tab-separated: the variable's id; the struct names, member
-indices and member names along the path, each joined with `/`; the byte offset from the start of the block; the scalar
-as `i`, `u` or `f` and its width.
+indices and member names along the path, each joined with `/`, a vector component as `[k]` after its member's name; the
+byte offset from the start of the block; the scalar as `i`, `u` or `f` and its width.
 
 ```
 22	Params	0	count	0	u32
@@ -118,9 +118,9 @@ in offset order and aligned for C++, and only scalars and structs are supported.
 
 ## Generators
 
-- **glsl**: a random push constant interface (nested structs, every supported scalar, explicit offsets with gaps,
-  occasionally a name that spvbind must reject) as GLSL, compiled with `glslc --target-env=vulkan1.3`. The realistic
-  input; about 15 modules/s, bounded by glslc.
+- **glsl**: a random push constant interface (nested structs, every supported scalar and vectors of them, explicit
+  offsets with gaps, occasionally a name that spvbind must reject) as GLSL, compiled with `glslc --target-env=vulkan1.3`.
+  The realistic input; about 15 modules/s, bounded by glslc.
 - **spirv**: the same interfaces written word by word, with what glslc never produces: random ids, shuffled names and
   decorations, gaps inside nested structs, the scalar block layout; and with probability `--exotic` each of: huge
   offsets, offsets out of member order, no `Block`, a nameless struct or member, a member without an Offset or with two,
