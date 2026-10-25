@@ -19,14 +19,15 @@ struct Path {
 
 const char* orEmpty(const char* s) { return s ? s : ""; }
 
-void appendPath(std::string& out, const Path& path, uint32_t var) {
+// `element` follows the last member name, as `[k]` for component k of a vector, like spvbind prints it.
+void appendPath(std::string& out, const Path& path, uint32_t var, const std::string& element = "") {
     out += std::to_string(var) + '\t';
     for (size_t i = 0; i < path.structs.size(); ++i) out += (i ? "/" : "") + std::string(orEmpty(path.structs[i]));
     out += '\t';
     for (size_t i = 0; i < path.indices.size(); ++i) out += (i ? "/" : "") + std::to_string(path.indices[i]);
     out += '\t';
     for (size_t i = 0; i < path.members.size(); ++i) out += (i ? "/" : "") + std::string(orEmpty(path.members[i]));
-    out += '\t';
+    out += element + '\t';
 }
 
 void dump(Reflection& r, uint32_t var, const SpvReflectBlockVariable& parent, Path& path) {
@@ -57,13 +58,23 @@ void dump(Reflection& r, uint32_t var, const SpvReflectBlockVariable& parent, Pa
         SpvReflectTypeFlags composite = SPV_REFLECT_TYPE_FLAG_VECTOR | SPV_REFLECT_TYPE_FLAG_MATRIX |
             SPV_REFLECT_TYPE_FLAG_ARRAY | SPV_REFLECT_TYPE_FLAG_REF |
             (SPV_REFLECT_TYPE_FLAG_EXTERNAL_MASK & ~SPV_REFLECT_TYPE_FLAG_EXTERNAL_BLOCK);
+        SpvReflectTypeFlags numeric = SPV_REFLECT_TYPE_FLAG_INT | SPV_REFLECT_TYPE_FLAG_FLOAT;
+        SpvReflectTypeFlags notScalar = composite | SPV_REFLECT_TYPE_FLAG_STRUCT | SPV_REFLECT_TYPE_FLAG_BOOL;
         if ((flags & SPV_REFLECT_TYPE_FLAG_STRUCT) && !(flags & composite)) {
             dump(r, var, member, path);
-        } else if ((flags & (SPV_REFLECT_TYPE_FLAG_INT | SPV_REFLECT_TYPE_FLAG_FLOAT)) &&
-                   !(flags & (composite | SPV_REFLECT_TYPE_FLAG_STRUCT | SPV_REFLECT_TYPE_FLAG_BOOL))) {
+        } else if ((flags & numeric) && !(flags & notScalar)) {
             appendPath(r.text, path, var);
             char kind = (flags & SPV_REFLECT_TYPE_FLAG_FLOAT) ? 'f' : (member.numeric.scalar.signedness ? 'i' : 'u');
             r.text += std::to_string(member.absolute_offset) + '\t' + kind + std::to_string(member.numeric.scalar.width) + '\n';
+        } else if ((flags & numeric) && (flags & SPV_REFLECT_TYPE_FLAG_VECTOR) &&
+                   !(flags & (notScalar & ~SPV_REFLECT_TYPE_FLAG_VECTOR))) {
+            // A vector: one line per component, each the component's size further on.
+            char kind = (flags & SPV_REFLECT_TYPE_FLAG_FLOAT) ? 'f' : (member.numeric.scalar.signedness ? 'i' : 'u');
+            uint32_t width = member.numeric.scalar.width;
+            for (uint32_t k = 0; k < member.numeric.vector.component_count; ++k) {
+                appendPath(r.text, path, var, "[" + std::to_string(k) + "]");
+                r.text += std::to_string(member.absolute_offset + k * (width / 8)) + '\t' + kind + std::to_string(width) + '\n';
+            }
         } else {
             char buffer[64];
             std::snprintf(buffer, sizeof buffer, "%u\tunsupported flags=0x%08x\n", member.absolute_offset, (unsigned)flags);
