@@ -20,10 +20,18 @@ jobs:
           leanchecker-args: Spec Spvbind Proofs Guarantees
       - name: Example from the committed module
         run: .lake/build/bin/spvbind examples/params.spv | diff -u examples/params.hpp -
+      - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # 31.11.3
+      - name: glslc and spirv-as from nixpkgs
+        # Ubuntu 24.04's spirv-tools (2025.1) predates SPV_KHR_bfloat16, which tests/rejected/fp_encoding.spvasm needs.
+        # nixos-unstable as of 2026-10-23: shaderc 2026.1, SPIRV-Tools v2026.4.
+        run: |
+          nixpkgs=github:NixOS/nixpkgs/3ec636362e1816bc2f0888fa0fa2c69f1bc9e504
+          nix build --out-link "$RUNNER_TEMP/shaderc" "$nixpkgs#shaderc.bin"
+          nix build --out-link "$RUNNER_TEMP/spirv-tools" "$nixpkgs#spirv-tools"
+          echo "$RUNNER_TEMP/shaderc/bin" >> "$GITHUB_PATH"
+          echo "$RUNNER_TEMP/spirv-tools/bin" >> "$GITHUB_PATH"
       - name: Example compiled with glslc
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends glslc spirv-tools
           glslc --target-env=vulkan1.3 -o examples/params.spv examples/params.comp
           .lake/build/bin/spvbind examples/params.spv | diff -u examples/params.hpp -
       - name: The header compiles
