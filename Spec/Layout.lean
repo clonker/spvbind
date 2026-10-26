@@ -9,9 +9,11 @@ and Stride Assignment" (Push Constant Interface). So where each scalar is follow
 layout rules (std430 and the others) only constrain which decorations are valid.
 
 SPIR-V specification, version 1.6, revision 8: 3.2.19 Decoration, Offset: "It dictates the byte offset of the member
-relative to the beginning of the structure." Vectors have no decoration: their components follow each other, each the
-size of the component type (Vulkan, Offset and Stride Assignment: a vector "has a scalar alignment equal to that of its
-component type", and a matrix is "equivalent to a C element array of vectors with R components").
+relative to the beginning of the structure." ArrayStride: "the stride, in bytes, of the array's elements" (Vulkan: "Any
+ArrayStride ... decoration must be a multiple of the alignment of the array"). Vectors have no decoration: their
+components follow each other, each the size of the component type (Vulkan, Offset and Stride Assignment: a vector "has
+a scalar alignment equal to that of its component type", and a matrix is "equivalent to a C element array of vectors
+with R components").
 -/
 
 namespace Spec
@@ -74,6 +76,15 @@ inductive Located (m : Module) : Id → Location → Prop
       .typeVector type componentType count ∈ m.instructions → component < count →
       Located m componentType ⟨[], 0, s⟩ →
       Located m type ⟨[.element component.toNat], component.toNat * s.bytes, s⟩
+  /-- Element `i` of an array, for `i` below its Length, a constant, is `i` times the array's ArrayStride from the
+  start of the array, and so is every scalar in it, relative to where it is in the element. -/
+  | element {type elementType length lengthType : Id} {value stride : Word} {more : List Word} {i : Nat}
+      {l : Location} :
+      .typeArray type elementType length ∈ m.instructions →
+      .constant lengthType length value more ∈ m.instructions → i < wordsValue value more →
+      .decorate type (.arrayStride stride) ∈ m.instructions →
+      Located m elementType l →
+      Located m type ⟨.element i :: l.path, i * stride.toNat + l.offset, l.scalar⟩
 
 /-- `VariableLocated m v l`: the same, in the object that variable `v` points to. OpVariable (3.3.8): "Result Type
 must be an OpTypePointer. Its Type operand is the type of object in memory." -/

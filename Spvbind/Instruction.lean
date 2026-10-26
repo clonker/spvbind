@@ -7,8 +7,9 @@ import Spvbind.Binary
 
 namespace Spvbind
 
-open Spec (Word Byte octets LiteralString Offset modelledDecorations Decoration OpName OpMemberName OpTypeInt
-  OpTypeFloat OpTypeVector OpTypeStruct OpTypePointer OpVariable OpMemberDecorate modelled Instruction Module)
+open Spec (Word Byte octets LiteralString ArrayStride Offset modelledDecorations Decoration OpName OpMemberName OpTypeInt
+  OpTypeFloat OpTypeVector OpTypeArray OpTypeStruct OpTypePointer OpConstant OpVariable OpDecorate OpMemberDecorate
+  modelled Instruction Module)
 
 /-- A literal string at the start of `ws`, and the words after it. The octets up to the first 0 are the string; the
 words it was read from must be exactly the string's words, which also checks the padding. -/
@@ -29,63 +30,97 @@ def decodeString (ws : List Word) : Except String (LiteralString × List Word) :
 def decodeDecoration : List Word → Except String Decoration
   | [] => .error "decoration without enumerant"
   | e :: ops =>
-    if e = Offset then
+    if e = ArrayStride then
+      match ops with
+      | [stride] => .ok (.arrayStride stride)
+      | _ => .error "ArrayStride decoration without exactly one operand"
+    else if e = Offset then
       match ops with
       | [byteOffset] => .ok (.offset byteOffset)
       | _ => .error "Offset decoration without exactly one operand"
     else if h : e ∈ modelledDecorations then .error s!"decoration {e} is modelled but not decoded"
     else .ok (.other e ops h)
 
+/-! The operands of each modelled instruction, one function each, so that `decodeOperands` stays a chain of small
+branches that proofs can split. -/
+
+def decodeName : List Word → Except String Instruction
+  | target :: rest =>
+    match decodeString rest with
+    | .ok (s, []) => .ok (.name target s)
+    | .ok (_, _ :: _) => .error "OpName has operands after its name"
+    | .error e => .error e
+  | [] => .error "OpName without operands"
+
+def decodeMemberName : List Word → Except String Instruction
+  | type :: member :: rest =>
+    match decodeString rest with
+    | .ok (s, []) => .ok (.memberName type member s)
+    | .ok (_, _ :: _) => .error "OpMemberName has operands after its name"
+    | .error e => .error e
+  | _ => .error "OpMemberName with fewer than three operands"
+
+def decodeTypeInt : List Word → Except String Instruction
+  | [result, width, signedness] => .ok (.typeInt result width signedness)
+  | _ => .error "OpTypeInt without exactly three operands"
+
+def decodeTypeFloat : List Word → Except String Instruction
+  | [result, width] => .ok (.typeFloat result width)
+  | _ => .error "OpTypeFloat without exactly two operands; the Floating Point Encoding operand is not supported"
+
+def decodeTypeVector : List Word → Except String Instruction
+  | [result, componentType, componentCount] => .ok (.typeVector result componentType componentCount)
+  | _ => .error "OpTypeVector without exactly three operands"
+
+def decodeTypeArray : List Word → Except String Instruction
+  | [result, elementType, length] => .ok (.typeArray result elementType length)
+  | _ => .error "OpTypeArray without exactly three operands"
+
+def decodeTypeStruct : List Word → Except String Instruction
+  | result :: members => .ok (.typeStruct result members)
+  | [] => .error "OpTypeStruct without operands"
+
+def decodeTypePointer : List Word → Except String Instruction
+  | [result, storageClass, type] => .ok (.typePointer result storageClass type)
+  | _ => .error "OpTypePointer without exactly three operands"
+
+def decodeConstant : List Word → Except String Instruction
+  | resultType :: result :: value :: more => .ok (.constant resultType result value more)
+  | _ => .error "OpConstant with fewer than three operands"
+
+def decodeVariable : List Word → Except String Instruction
+  | [resultType, result, storageClass] => .ok (.var resultType result storageClass none)
+  | [resultType, result, storageClass, initializer] => .ok (.var resultType result storageClass (some initializer))
+  | _ => .error "OpVariable without three or four operands"
+
+def decodeDecorate : List Word → Except String Instruction
+  | target :: rest =>
+    match decodeDecoration rest with
+    | .ok d => .ok (.decorate target d)
+    | .error e => .error e
+  | [] => .error "OpDecorate without operands"
+
+def decodeMemberDecorate : List Word → Except String Instruction
+  | type :: member :: rest =>
+    match decodeDecoration rest with
+    | .ok d => .ok (.memberDecorate type member d)
+    | .error e => .error e
+  | _ => .error "OpMemberDecorate with fewer than three operands"
+
 /-- The instruction with opcode enumerant `e` and operands `ops`. -/
 def decodeOperands (e : UInt16) (ops : List Word) : Except String Instruction :=
-  if e = OpName then
-    match ops with
-    | target :: rest =>
-      match decodeString rest with
-      | .ok (s, []) => .ok (.name target s)
-      | .ok (_, _ :: _) => .error "OpName has operands after its name"
-      | .error e => .error e
-    | [] => .error "OpName without operands"
-  else if e = OpMemberName then
-    match ops with
-    | type :: member :: rest =>
-      match decodeString rest with
-      | .ok (s, []) => .ok (.memberName type member s)
-      | .ok (_, _ :: _) => .error "OpMemberName has operands after its name"
-      | .error e => .error e
-    | _ => .error "OpMemberName with fewer than three operands"
-  else if e = OpTypeInt then
-    match ops with
-    | [result, width, signedness] => .ok (.typeInt result width signedness)
-    | _ => .error "OpTypeInt without exactly three operands"
-  else if e = OpTypeFloat then
-    match ops with
-    | [result, width] => .ok (.typeFloat result width)
-    | _ => .error "OpTypeFloat without exactly two operands; the Floating Point Encoding operand is not supported"
-  else if e = OpTypeVector then
-    match ops with
-    | [result, componentType, componentCount] => .ok (.typeVector result componentType componentCount)
-    | _ => .error "OpTypeVector without exactly three operands"
-  else if e = OpTypeStruct then
-    match ops with
-    | result :: members => .ok (.typeStruct result members)
-    | [] => .error "OpTypeStruct without operands"
-  else if e = OpTypePointer then
-    match ops with
-    | [result, storageClass, type] => .ok (.typePointer result storageClass type)
-    | _ => .error "OpTypePointer without exactly three operands"
-  else if e = OpVariable then
-    match ops with
-    | [resultType, result, storageClass] => .ok (.var resultType result storageClass none)
-    | [resultType, result, storageClass, initializer] => .ok (.var resultType result storageClass (some initializer))
-    | _ => .error "OpVariable without three or four operands"
-  else if e = OpMemberDecorate then
-    match ops with
-    | type :: member :: rest =>
-      match decodeDecoration rest with
-      | .ok d => .ok (.memberDecorate type member d)
-      | .error e => .error e
-    | _ => .error "OpMemberDecorate with fewer than three operands"
+  if e = OpName then decodeName ops
+  else if e = OpMemberName then decodeMemberName ops
+  else if e = OpTypeInt then decodeTypeInt ops
+  else if e = OpTypeFloat then decodeTypeFloat ops
+  else if e = OpTypeVector then decodeTypeVector ops
+  else if e = OpTypeArray then decodeTypeArray ops
+  else if e = OpTypeStruct then decodeTypeStruct ops
+  else if e = OpTypePointer then decodeTypePointer ops
+  else if e = OpConstant then decodeConstant ops
+  else if e = OpVariable then decodeVariable ops
+  else if e = OpDecorate then decodeDecorate ops
+  else if e = OpMemberDecorate then decodeMemberDecorate ops
   else if h : e ∈ modelled then .error s!"opcode enumerant {e} is modelled but not decoded"
   else .ok (.other e ops h)
 

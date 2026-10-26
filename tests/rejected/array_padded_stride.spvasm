@@ -1,0 +1,26 @@
+; An array of vec3 with the std430 stride 16, which is not the element size 12: padded strides are not supported yet.
+; target-env: vulkan1.3
+               OpCapability Shader
+               OpMemoryModel Logical GLSL450
+               OpEntryPoint GLCompute %main "main" %pc
+               OpExecutionMode %main LocalSize 1 1 1
+               OpName %S "S"
+               OpMemberName %S 0 "x"
+               OpName %pc ""
+               OpDecorate %S Block
+               OpMemberDecorate %S 0 Offset 0
+               OpDecorate %arr ArrayStride 16
+       %void = OpTypeVoid
+         %fn = OpTypeFunction %void
+      %float = OpTypeFloat 32
+       %uint = OpTypeInt 32 0
+     %uint_2 = OpConstant %uint 2
+         %v3 = OpTypeVector %float 3
+        %arr = OpTypeArray %v3 %uint_2
+          %S = OpTypeStruct %arr
+        %ptr = OpTypePointer PushConstant %S
+         %pc = OpVariable %ptr PushConstant
+       %main = OpFunction %void None %fn
+      %label = OpLabel
+               OpReturn
+               OpFunctionEnd

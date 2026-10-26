@@ -99,6 +99,7 @@ theorem located_of_typeInt {t w s : Word} (hi : .typeInt t w s ∈ m.instruction
     | float hi' => cases eq_of_nodup_filterMap hnd hi' hi rfl rfl
     | member hs => cases eq_of_nodup_filterMap hnd hs hi rfl rfl
     | component hv => cases eq_of_nodup_filterMap hnd hv hi rfl rfl
+    | element ha => cases eq_of_nodup_filterMap hnd ha hi rfl rfl
   · rintro (⟨rfl, rfl⟩ | ⟨rfl, rfl⟩)
     · exact .unsigned hi
     · exact .signed hi
@@ -113,6 +114,7 @@ theorem located_of_typeFloat {t w : Word} (hi : .typeFloat t w ∈ m.instruction
     | float hi' => cases eq_of_nodup_filterMap hnd hi' hi rfl rfl; rfl
     | member hs => cases eq_of_nodup_filterMap hnd hs hi rfl rfl
     | component hv => cases eq_of_nodup_filterMap hnd hv hi rfl rfl
+    | element ha => cases eq_of_nodup_filterMap hnd ha hi rfl rfl
   · rintro rfl
     exact .float hi
 
@@ -132,6 +134,7 @@ theorem located_of_typeStruct {t : Id} {all : List Id} (hs : .typeStruct t all �
       cases eq_of_nodup_filterMap hnd hs' hs rfl rfl
       exact ⟨_, _, _, _, _, _, hu, hd, hn, hmn, hl, rfl⟩
     | component hv => cases eq_of_nodup_filterMap hnd hv hs rfl rfl
+    | element ha => cases eq_of_nodup_filterMap hnd ha hs rfl rfl
   · rintro ⟨member, byteOffset, u, l', structName, memberName, hu, hd, hn, hmn, hl, rfl⟩
     exact .member hs hu hd hn hmn hl
 
@@ -148,8 +151,28 @@ theorem located_of_typeVector {t ct : Id} {n : Word} (hv : .typeVector t ct n �
     | component hv' hk hl =>
       cases eq_of_nodup_filterMap hnd hv' hv rfl rfl
       exact ⟨_, _, hk, hl, rfl⟩
+    | element ha => cases eq_of_nodup_filterMap hnd ha hv rfl rfl
   · rintro ⟨k, s, hk, hl, rfl⟩
     exact .component hv hk hl
+
+theorem located_of_typeArray {t et len : Id} (ha : .typeArray t et len ∈ m.instructions) (l : Location) :
+    Located m t l ↔ ∃ (i : Nat) (lt : Id) (value stride : Word) (more : List Word) (l' : Location),
+      .constant lt len value more ∈ m.instructions ∧ i < Spec.wordsValue value more ∧
+      .decorate t (.arrayStride stride) ∈ m.instructions ∧ Located m et l' ∧
+      l = ⟨.element i :: l'.path, i * stride.toNat + l'.offset, l'.scalar⟩ := by
+  constructor
+  · intro h
+    cases h with
+    | unsigned hi => cases eq_of_nodup_filterMap hnd hi ha rfl rfl
+    | signed hi => cases eq_of_nodup_filterMap hnd hi ha rfl rfl
+    | float hi => cases eq_of_nodup_filterMap hnd hi ha rfl rfl
+    | member hs => cases eq_of_nodup_filterMap hnd hs ha rfl rfl
+    | component hv => cases eq_of_nodup_filterMap hnd hv ha rfl rfl
+    | element ha' hc hi hd hl =>
+      cases eq_of_nodup_filterMap hnd ha' ha rfl rfl
+      exact ⟨_, _, _, _, _, _, hc, hi, hd, hl, rfl⟩
+  · rintro ⟨i, lt, value, stride, more, l', hc, hi, hd, hl, rfl⟩
+    exact .element ha hc hi hd hl
 
 end
 
@@ -161,6 +184,10 @@ structure Facts (m : Module) (ctx : Context) : Prop where
   offsets : ∀ t k o, ctx.offsets[(t, k)]? = some o ↔ .memberDecorate t k (.offset o) ∈ m.instructions
   names : ∀ t n, ctx.names[t]? = some n ↔ ∃ s, .name t s ∈ m.instructions ∧ s.value = n
   memberNames : ∀ t k n, ctx.memberNames[(t, k)]? = some n ↔ ∃ s, .memberName t k s ∈ m.instructions ∧ s.value = n
+  strides : ∀ t s, ctx.strides[t]? = some s ↔ .decorate t (.arrayStride s) ∈ m.instructions
+  constants : ∀ k n, ctx.constants[k]? = some n ↔
+    ∃ (lt : Id) (value : Word) (more : List Word), .constant lt k value more ∈ m.instructions ∧
+      Spec.wordsValue value more = n
 
 def Correct (m : Module) (types : Types) : Prop :=
   ∀ t c, types[t]? = some (.ok c) → ∀ l, l ∈ c.locations ↔ Located m t l
@@ -328,6 +355,44 @@ theorem correct_addType {m : Module} {ctx : Context} {types : Types} {i : Instru
       · rintro ⟨k, _, hk, rfl, rfl⟩
         exact ⟨k.toNat, UInt32.lt_iff_toNat_lt.mp hk, _, rfl, by simp⟩
     all_goals cases ht
+  case typeArray r et len =>
+    simp only [addType, HashMap.getElem?_insert, beq_iff_eq] at ht
+    split at ht
+    case isFalse => exact hc t c ht l
+    rename_i hrt
+    subst hrt
+    simp only [Option.some.injEq] at ht
+    rw [located_of_typeArray hf.results hi l]
+    unfold array at ht
+    split at ht
+    case h_1 e n stride het hlen hstride =>
+      split at ht
+      case isFalse => cases ht
+      rename_i hok
+      cases ht
+      have hcn : ∀ lt value more, .constant lt len value more ∈ m.instructions → Spec.wordsValue value more = n := by
+        intro lt value more hm
+        have := (hf.constants len _).mpr ⟨lt, value, more, hm, rfl⟩
+        rw [hlen] at this
+        cases this
+        rfl
+      have hsn : ∀ s', .decorate r (.arrayStride s') ∈ m.instructions → s' = stride := by
+        intro s' hm
+        have := (hf.strides r s').mpr hm
+        rw [hstride] at this
+        cases this
+        rfl
+      obtain ⟨lt, value, more, hm, hv⟩ := (hf.constants len n).mp hlen
+      have hsm := (hf.strides r stride).mp hstride
+      simp only [Ty.locations, List.mem_flatMap, List.mem_range, List.mem_map]
+      constructor
+      · rintro ⟨i, hi, l', hl', rfl⟩
+        exact ⟨i, lt, value, stride, more, l', hm, hv ▸ hi, hsm, (hc et e het l').mp hl', by rw [hok.1]⟩
+      · rintro ⟨i, lt', value', stride', more', l', hm', hi, hsm', hl', rfl⟩
+        rw [hcn lt' value' more' hm'] at hi
+        rw [hsn stride' hsm']
+        exact ⟨i, hi, l', (hc et e het l').mpr hl', by rw [hok.1]⟩
+    all_goals cases ht
   all_goals exact hc t c ht l
 
 theorem correct_foldl {m : Module} {ctx : Context} (hf : Facts m ctx) :
@@ -427,12 +492,19 @@ theorem generate_correct (ws : List Word) (out : List (Id × Ty)) (h : generate 
     cases hmn : distinct ((m.instructions.filterMap memberName?).map Prod.fst) with
     | false => simp [generate, hd, hv, hr, ho, hn, hmn, bind, Except.bind] at h
     | true =>
-    simp only [generate, hd, hv, hr, ho, hn, hmn, bind, Except.bind, ↓reduceIte] at h
+    cases hst : distinct ((m.instructions.filterMap arrayStride?).map Prod.fst) with
+    | false => simp [generate, hd, hv, hr, ho, hn, hmn, hst, bind, Except.bind] at h
+    | true =>
+    simp only [generate, hd, hv, hr, ho, hn, hmn, hst, bind, Except.bind, ↓reduceIte] at h
     have hnd := (distinct_eq_true _).mp hr
     have hno := (distinct_eq_true _).mp ho
+    have hck : ((m.instructions.filterMap constant?).map Prod.fst).Nodup := by
+      rw [List.map_filterMap]
+      exact hnd.sublist (filterMap_sublist_filterMap (fun i x hx => by cases i <;> simp_all [constant?, result?]) _)
     have hf : Facts m ⟨.ofList (m.instructions.filterMap offset?), .ofList (m.instructions.filterMap name?),
-        .ofList (m.instructions.filterMap memberName?)⟩ := by
-      refine ⟨hnd, fun t k o => ?_, fun t n => ?_, fun t k n => ?_⟩
+        .ofList (m.instructions.filterMap memberName?), .ofList (m.instructions.filterMap arrayStride?),
+        .ofList (m.instructions.filterMap constant?)⟩ := by
+      refine ⟨hnd, fun t k o => ?_, fun t n => ?_, fun t k n => ?_, fun t s => ?_, fun k n => ?_⟩
       · rw [getElem?_ofList_eq_some hno, List.mem_filterMap]
         simp [offset?_eq_some]
       · rw [getElem?_ofList_eq_some ((distinct_eq_true _).mp hn), List.mem_filterMap]
@@ -451,6 +523,24 @@ theorem generate_correct (ws : List Word) (out : List (Id × Ty)) (h : generate 
           exact ⟨_, hi, rfl⟩
         · rintro ⟨s, hs, rfl⟩
           exact ⟨_, hs, rfl⟩
+      · rw [getElem?_ofList_eq_some ((distinct_eq_true _).mp hst), List.mem_filterMap]
+        constructor
+        · rintro ⟨i, hi, hsi⟩
+          cases i <;> simp only [arrayStride?, reduceCtorEq] at hsi
+          rename_i d
+          cases d <;> simp only [reduceCtorEq, Option.some.injEq, Prod.mk.injEq] at hsi
+          obtain ⟨rfl, rfl⟩ := hsi
+          exact hi
+        · intro hi
+          exact ⟨_, hi, rfl⟩
+      · rw [getElem?_ofList_eq_some hck, List.mem_filterMap]
+        constructor
+        · rintro ⟨i, hi, hci⟩
+          cases i <;> simp only [constant?, reduceCtorEq, Option.some.injEq, Prod.mk.injEq] at hci
+          obtain ⟨rfl, rfl⟩ := hci
+          exact ⟨_, _, _, hi, rfl⟩
+        · rintro ⟨lt, value, more, hm, rfl⟩
+          exact ⟨_, hm, rfl⟩
     have hc := correct_foldl hf m.instructions ∅ (fun _ h => h) (correct_empty m)
     have hpk : ((m.instructions.filterMap pointer?).map Prod.fst).Nodup := by
       rw [List.map_filterMap]

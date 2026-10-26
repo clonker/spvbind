@@ -91,9 +91,10 @@ lake build                                        # the executable and all proof
 ```
 
 The module must be compiled without optimization (`glslc` without `-O`), which would remove the names, and be SPIR-V
-1.4 or later (`--target-env=vulkan1.2` or later). For now only push constant blocks of integers, floats, vectors of
-them (as `std::array`) and nested structs are supported, with members in offset order; anything else is rejected with
-a message naming the member.
+1.4 or later (`--target-env=vulkan1.2` or later). For now only push constant blocks of integers, floats, vectors,
+arrays whose stride is their element's size (both as `std::array`) and nested structs are supported, with members in
+offset order; anything else, a `vec3[N]` or `mat3` with their padded strides for one, is rejected with a message
+naming the member.
 
 ## Tests
 

@@ -27,14 +27,24 @@ where
 
 /-- The id an instruction spvbind reads defines. -/
 def result? : Instruction → Option Id
-  | .typeInt result .. | .typeFloat result .. | .typeVector result .. | .typeStruct result ..
+  | .typeInt result .. | .typeFloat result .. | .typeVector result .. | .typeArray result .. | .typeStruct result ..
   | .typePointer result .. => some result
-  | .var _ result .. => some result
+  | .constant _ result .. | .var _ result .. => some result
   | _ => none
 
 /-- The Offset an instruction gives a member, by structure type and member. -/
 def offset? : Instruction → Option ((Id × Word) × Word)
   | .memberDecorate type member (.offset byteOffset) => some ((type, member), byteOffset)
+  | _ => none
+
+/-- The ArrayStride an instruction gives a type. -/
+def arrayStride? : Instruction → Option (Id × Word)
+  | .decorate type (.arrayStride stride) => some (type, stride)
+  | _ => none
+
+/-- The value of a constant, by its id. -/
+def constant? : Instruction → Option (Id × Nat)
+  | .constant _ result value more => some (result, Spec.wordsValue value more)
   | _ => none
 
 /-- The type a pointer type points to. -/
@@ -82,6 +92,8 @@ structure Context where
   offsets : HashMap (Id × Word) Word
   names : HashMap Id String
   memberNames : HashMap (Id × Word) String
+  strides : HashMap Id Word
+  constants : HashMap Id Nat
 
 /-- A type in messages: its name, or its id if it has none. -/
 def Context.describe (ctx : Context) (type : Id) : String :=
@@ -113,6 +125,19 @@ def vector (types : Types) (componentType : Id) (count : Word) : Except String T
   | some (.ok _) => .error "a vector whose component type is not a scalar"
   | some (.error e) => .error s!"vector component: {e}"
   | none => .error "a vector of a type spvbind does not support"
+
+/-- An array type, in C++ a `std::array` of its element type, if its ArrayStride is the element's C++ size and its
+Length a constant of at least 1. A larger stride would need a padded element type, which is not supported yet. -/
+def array (ctx : Context) (types : Types) (type elementType length : Id) : Except String Ty :=
+  match types[elementType]?, ctx.constants[length]?, ctx.strides[type]? with
+  | some (.ok e), some n, some stride =>
+    if stride.toNat = e.size ∧ 0 < n then .ok (.array e n)
+    else .error s!"an array of {n} elements with stride {stride} whose elements have C++ size {e.size}; the stride \
+      must be the size and the length at least 1"
+  | some (.error e), _, _ => .error s!"array element: {e}"
+  | none, _, _ => .error "an array of a type spvbind does not support"
+  | some (.ok _), none, _ => .error "an array whose length is not a constant"
+  | some (.ok _), some _, none => .error "an array without ArrayStride"
 
 /-- The members of struct `type` from member `index` on, whose types are `memberTypes`, starting at byte `start`.
 Each is placed at its Offset, after explicit padding; one that overlaps the member before it, or whose Offset is not
@@ -157,6 +182,7 @@ def addType (ctx : Context) (types : Types) : Instruction → Types
   | .typeInt result width signedness => types.insert result (int width signedness)
   | .typeFloat result width => types.insert result (float width)
   | .typeVector result componentType count => types.insert result (vector types componentType count)
+  | .typeArray result elementType length => types.insert result (array ctx types result elementType length)
   | .typeStruct result memberTypes => types.insert result (struct ctx types result memberTypes)
   | _ => types
 
@@ -187,10 +213,14 @@ def generate (ws : List Word) : Except String (List (Id × Ty)) := do
     throw "an id has more than one OpName"
   unless distinct ((m.instructions.filterMap memberName?).map Prod.fst) do
     throw "a member has more than one OpMemberName"
+  unless distinct ((m.instructions.filterMap arrayStride?).map Prod.fst) do
+    throw "an array has more than one ArrayStride decoration"
   let ctx : Context := {
     offsets := .ofList (m.instructions.filterMap offset?)
     names := .ofList (m.instructions.filterMap name?)
-    memberNames := .ofList (m.instructions.filterMap memberName?) }
+    memberNames := .ofList (m.instructions.filterMap memberName?)
+    strides := .ofList (m.instructions.filterMap arrayStride?)
+    constants := .ofList (m.instructions.filterMap constant?) }
   let types := m.instructions.foldl (addType ctx) ∅
   blocks types (.ofList (m.instructions.filterMap pointer?)) (m.instructions.filterMap pushConstant?)
 

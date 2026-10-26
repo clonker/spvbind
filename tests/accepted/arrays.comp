@@ -1,0 +1,34 @@
+#version 460
+#extension GL_EXT_shader_explicit_arithmetic_types : require
+#extension GL_EXT_shader_8bit_storage : require
+
+layout(local_size_x = 1) in;
+
+// Arrays whose std430 stride is their element's C++ size, as std::array: scalars, vectors, a struct whose std430 size
+// is its C++ size, and an array of arrays.
+struct Pair
+{
+    double a;
+    float b;
+};
+
+layout(push_constant) uniform Arrays
+{
+    float a[4];
+    vec4 b[2];
+    ivec2 c[3];
+    Pair d[2];
+    float e[2][3];
+    int64_t f[2];
+    layout(offset = 160) uint8_t g[8];
+};
+
+layout(set = 0, binding = 0) buffer Out
+{
+    uint words[];
+};
+
+void main()
+{
+    words[0] = uint(a[1] + b[1].w + float(c[2].y) + d[1].b + e[1][2] + float(f[1]) + float(g[7]));
+}

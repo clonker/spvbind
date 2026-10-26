@@ -1,4 +1,4 @@
-; An array member: not supported yet.
+; An array without an ArrayStride decoration.
 ; target-env: vulkan1.3
                OpCapability Shader
                OpMemoryModel Logical GLSL450
@@ -9,11 +9,11 @@
                OpName %pc ""
                OpDecorate %S Block
                OpMemberDecorate %S 0 Offset 0
-               OpDecorate %arr ArrayStride 4
+
        %void = OpTypeVoid
          %fn = OpTypeFunction %void
       %float = OpTypeFloat 32
-          %uint = OpTypeInt 32 0
+       %uint = OpTypeInt 32 0
      %uint_2 = OpConstant %uint 2
         %arr = OpTypeArray %float %uint_2
           %S = OpTypeStruct %arr

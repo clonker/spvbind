@@ -9,8 +9,9 @@ import Proofs.Binary
 namespace Proofs
 
 open Spvbind
-open Spec (Word Byte octets LiteralString wordOfOctets packOctets Decoration modelledDecorations OpName OpMemberName
-  OpTypeInt OpTypeFloat OpTypeVector OpTypeStruct OpTypePointer OpVariable OpMemberDecorate modelled Instruction Module)
+open Spec (Word Byte octets LiteralString wordOfOctets packOctets Decoration modelledDecorations ArrayStride Offset
+  OpName OpMemberName OpTypeInt OpTypeFloat OpTypeVector OpTypeArray OpTypeStruct OpTypePointer OpConstant OpVariable
+  OpDecorate OpMemberDecorate modelled Instruction Module)
 
 /-! Literal strings. -/
 
@@ -80,35 +81,57 @@ theorem decodeDecoration_eq_ok (ws : List Word) (d : Decoration) : decodeDecorat
     all_goals first | cases h; done | cases h; simp_all [Decoration.words]
   · rintro rfl
     cases d with
-    | offset => simp [decodeDecoration, Decoration.words]
+    | arrayStride => simp [decodeDecoration, Decoration.words]
+    | offset => simp [decodeDecoration, Decoration.words, ArrayStride, Offset]
     | other e ops h =>
       have h' := h
-      simp only [modelledDecorations, List.mem_cons, List.not_mem_nil, or_false] at h'
-      simp [decodeDecoration, Decoration.words, h', h]
+      simp only [modelledDecorations, List.mem_cons, List.not_mem_nil, or_false, not_or] at h'
+      simp [decodeDecoration, Decoration.words, h'.1, h'.2, h]
 
 theorem decodeOperands_eq_ok (e : UInt16) (ops : List Word) (i : Instruction) :
     decodeOperands e ops = .ok i ↔ i.enumerant = e ∧ i.operands = ops := by
   constructor
   · intro h
-    unfold decodeOperands at h
-    repeat' split at h
-    all_goals first
-      | cases h; done
-      | cases h; simp_all [Instruction.enumerant, Instruction.operands, decodeString_eq_ok,
-          decodeDecoration_eq_ok]
+    -- Which branch of `decodeOperands` applies follows from `e`; `split` cannot take the chain of tests apart, `simp`
+    -- can, once `e` is known.
+    by_cases hm : e ∈ modelled
+    · have hm' := hm
+      simp only [modelled, List.mem_cons, List.not_mem_nil, or_false] at hm'
+      rcases hm' with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl
+      all_goals
+        simp [decodeOperands, OpName, OpMemberName, OpTypeInt, OpTypeFloat, OpTypeVector, OpTypeArray, OpTypeStruct,
+          OpTypePointer, OpConstant, OpVariable, OpDecorate, OpMemberDecorate] at h
+        first
+          | unfold decodeName at h | unfold decodeMemberName at h | unfold decodeTypeInt at h
+          | unfold decodeTypeFloat at h | unfold decodeTypeVector at h | unfold decodeTypeArray at h
+          | unfold decodeTypeStruct at h | unfold decodeTypePointer at h | unfold decodeConstant at h
+          | unfold decodeVariable at h | unfold decodeDecorate at h | unfold decodeMemberDecorate at h
+        repeat' split at h
+        all_goals first
+          | (cases h; done)
+          | (cases h; simp_all [Instruction.enumerant, Instruction.operands, decodeString_eq_ok,
+              decodeDecoration_eq_ok])
+    · have hm' := hm
+      simp only [modelled, List.mem_cons, List.not_mem_nil, or_false, not_or] at hm'
+      simp only [decodeOperands, hm', hm, ↓reduceIte, ↓reduceDIte, Except.ok.injEq] at h
+      subst h
+      simp [Instruction.enumerant, Instruction.operands]
   · rintro ⟨rfl, rfl⟩
     have hs (s : LiteralString) : decodeString s.words = .ok (s, []) := by simpa using decodeString_words s []
     have hd (d : Decoration) : decodeDecoration d.words = .ok d := (decodeDecoration_eq_ok _ _).mpr rfl
     cases i with
     | var resultType result storageClass initializer =>
-      cases initializer <;> simp [decodeOperands, Instruction.enumerant, Instruction.operands, OpName, OpMemberName,
-        OpTypeInt, OpTypeFloat, OpTypeVector, OpTypeStruct, OpTypePointer, OpVariable]
+      cases initializer <;> simp [decodeOperands, decodeVariable, Instruction.enumerant, Instruction.operands, OpName,
+        OpMemberName, OpTypeInt, OpTypeFloat, OpTypeVector, OpTypeArray, OpTypeStruct, OpTypePointer, OpConstant,
+        OpVariable]
     | other e ops h =>
       have h' := h
       simp only [modelled, List.mem_cons, List.not_mem_nil, or_false, not_or] at h'
       simp [decodeOperands, Instruction.enumerant, Instruction.operands, h', h]
-    | _ => simp [decodeOperands, Instruction.enumerant, Instruction.operands, OpName, OpMemberName, OpTypeInt,
-        OpTypeFloat, OpTypeVector, OpTypeStruct, OpTypePointer, OpVariable, OpMemberDecorate, hs, hd]
+    | _ => simp [decodeOperands, decodeName, decodeMemberName, decodeTypeInt, decodeTypeFloat, decodeTypeVector,
+        decodeTypeArray, decodeTypeStruct, decodeTypePointer, decodeConstant, decodeDecorate, decodeMemberDecorate,
+        Instruction.enumerant, Instruction.operands, OpName, OpMemberName, OpTypeInt, OpTypeFloat, OpTypeVector,
+        OpTypeArray, OpTypeStruct, OpTypePointer, OpConstant, OpVariable, OpDecorate, OpMemberDecorate, hs, hd]
 
 
 /-! The first word of an instruction: its 16 high-order bits and its 16 low-order bits. -/

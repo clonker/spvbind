@@ -29,6 +29,9 @@ MODEL = {
     'OpTypeInt': ['IdResult', 'LiteralInteger', 'LiteralInteger'],
     'OpTypeFloat': ['IdResult', 'LiteralInteger'],
     'OpTypeVector': ['IdResult', 'IdRef', 'LiteralInteger'],
+    'OpTypeArray': ['IdResult', 'IdRef', 'IdRef'],
+    'OpConstant': ['IdResultType', 'IdResult', 'LiteralContextDependentNumber'],
+    'OpDecorate': ['IdRef', 'Decoration'],
     'OpTypeStruct': ['IdResult', 'IdRef*'],
     'OpTypePointer': ['IdResult', 'StorageClass', 'IdRef'],
     'OpVariable': ['IdResultType', 'IdResult', 'StorageClass', 'IdRef?'],
@@ -37,7 +40,8 @@ MODEL = {
 # Optional operands the model leaves out on purpose: an instruction that has them is a decode error.
 OMITTED = {'OpTypeFloat': ['FPEncoding?']}
 # Enumerants modelled as values of `Word`, with their operand kind and, for decorations, their parameters.
-ENUMERANTS = {'PushConstant': ('StorageClass', []), 'Offset': ('Decoration', ['LiteralInteger'])}
+ENUMERANTS = {'PushConstant': ('StorageClass', []), 'Offset': ('Decoration', ['LiteralInteger']),
+              'ArrayStride': ('Decoration', ['LiteralInteger'])}
 
 
 def main() -> int:
@@ -84,8 +88,8 @@ def main() -> int:
     modelled = re.search(r'^def modelled : List UInt16 :=\n\s*\[([^\]]*)\]', lean, re.M)
     if not modelled or set(x.strip() for x in modelled.group(1).split(',')) != set(opcodes):
         problems.append('`modelled` does not list exactly the Op* definitions')
-    if not re.search(r'^def modelledDecorations : List Word := \[Offset\]', lean, re.M):
-        problems.append('`modelledDecorations` is not [Offset]')
+    if not re.search(r'^def modelledDecorations : List Word := \[ArrayStride, Offset\]', lean, re.M):
+        problems.append('`modelledDecorations` is not [ArrayStride, Offset]')
 
     for p in problems:
         print(f'PROBLEM: {p}')
