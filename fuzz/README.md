@@ -7,8 +7,9 @@ module, ask both where every scalar is, and compare. The subject here is [SPIRV-
 ## The format
 
 `spvbind --locations module.spv` prints one line per scalar, tab-separated: the variable's id; the struct names, member
-indices and member names along the path, each joined with `/`, an array element or vector component as `[k]` after its
-member's name; the byte offset from the start of the block; the scalar as `i`, `u` or `f` and its width.
+indices and member names along the path, each joined with `/`, an array element, matrix column (or row, if RowMajor)
+or vector component as `[k]` after its member's name; the byte offset from the start of the block; the scalar as `i`,
+`u` or `f` and its width.
 
 ```
 22	Params	0	count	0	u32
@@ -19,9 +20,10 @@ member's name; the byte offset from the start of the block; the scalar as `i`, `
 
 `reflect_locations.cpp` (and `reflect_dump`, its command line) prints the same from SPIRV-Reflect's
 `SpvReflectBlockVariable`s: offsets summed from the relative `offset`s, with its `absolute_offset` checked against the
-sum where SPIRV-Reflect fills it in; `numeric` and `array` for the components and elements; `type_description->type_name`.
-A member of any other kind (a matrix, an array of arrays, a reference) prints as `unsupported`, so that a module spvbind
-accepts never agrees by accident. Any other library can be a subject by printing this format.
+sum where SPIRV-Reflect fills it in; `numeric`, `array` and the majorness in `decoration_flags` for the components,
+elements, columns and rows; `type_description->type_name`. A member of any other kind (a reference, say) prints as
+`unsupported`, so that a module spvbind accepts never agrees by accident. Any other library can be a subject by printing
+this format.
 
 ## Running
 
@@ -69,11 +71,12 @@ Two fuzz tests, in `differential_fuzz.cpp`:
 - **`Differential.OracleAgreesOnBytes`**: arbitrary bytes, seeded with `examples/params.spv` and the compiled
   `tests/accepted` cases. This is where the malformed modules come from, and where SPIRV-Reflect crashes: FuzzTest
   stops at the first failure, so without `-DSPVBIND_FUZZ_PATCH_SPIRV_REFLECT=ON`, which applies
-  `patches/spirv-reflect-known-crashes.patch` (null checks in the cleanup after a failed parse and in
-  `OpSourceContinued`, a depth limit in `ParseType`, member indices checked against the struct) to the fetched
-  SPIRV-Reflect, this target finds one of the known segfaults within a second and ends; with it, the next unpatched
-  finding (see `reproducers/`) ends the run after about half a minute. `--time_limit_per_input=10s` turns a hang into
-  a finding too. Here SPIRV-Reflect rejecting a module spvbind accepts is not a failure but is
+  `patches/spirv-reflect-known-bugs.patch` (null checks in the cleanup after a failed parse and in
+  `OpSourceContinued`, a depth limit in `ParseType`, member indices checked against the struct, and the member's
+  decorations passed on to the elements of an array, which fixes the wrong layout of arrays of matrices) to the fetched
+  SPIRV-Reflect, this target finds one of the known segfaults within a second and ends, and the structured target the
+  array-of-matrices layout within a dozen runs; with it, the next unpatched finding (see `reproducers/`) ends the bytes
+  run after about half a minute. `--time_limit_per_input=10s` turns a hang into a finding too. Here SPIRV-Reflect rejecting a module spvbind accepts is not a failure but is
   recorded as `rejected-<hash>.spv`: on arbitrary bytes it almost always means invalid SPIR-V that spvbind ignores (a
   decoration of an undefined id, a member index past the end), which only spirv-val can tell apart, and `differential.py`
   does that. About 1,800 modules/s.
@@ -120,10 +123,11 @@ in offset order and aligned for C++, and only scalars and structs are supported.
 
 ## Generators
 
-- **glsl**: a random push constant interface (nested structs, every supported scalar, vectors of them, arrays of all
-  three, explicit offsets with gaps, occasionally a name that spvbind must reject) as GLSL, compiled with
-  `glslc --target-env=vulkan1.3`. The realistic input; about 15 modules/s, bounded by glslc. Arrays of `vec3` and of
-  structs with tail padding have padded strides, which spvbind rejects, so the oracle is silent on them.
+- **glsl**: a random push constant interface (nested structs, every supported scalar, vectors of them, matrices of
+  floats and doubles, row-major in the block, arrays of all of those, explicit offsets with gaps, occasionally a name
+  that spvbind must reject) as GLSL, compiled with `glslc --target-env=vulkan1.3`. The realistic input; about 15
+  modules/s, bounded by glslc. Arrays of `vec3`, matrices with three-component columns (or rows) and structs with tail
+  padding have padded strides, which spvbind rejects, so the oracle is silent on them.
 - **spirv**: the same interfaces written word by word, with what glslc never produces: random ids, shuffled names and
   decorations, gaps inside nested structs, the scalar block layout; and with probability `--exotic` each of: huge
   offsets, offsets out of member order, no `Block`, a nameless struct or member, a member without an Offset or with two,
@@ -145,7 +149,14 @@ corpus of the mutate mode.
 The FuzzTest bytes target then found, each within a minute once the previous one was patched: a fourth segfault
 (`OpSourceContinued` without an `OpSource`), the unbounded allocation from a member index known from the earlier C++
 fuzzing, a hang quadratic in that member index, and a heap buffer overflow writing past the array of functions; all in
-`reproducers/`, all on invalid SPIR-V. It also found something about spvbind: its decoders recursed once per word, which
+`reproducers/`, all on invalid SPIR-V.
+
+With matrices, both fuzzers found at once what the earlier C++ fuzzing had seen through the GPU: in an array of
+matrices, SPIRV-Reflect reports every column of an element at the element's start, because `ParseType` parses an
+array's element type without the member's decorations and so without its `MatrixStride`. This is on valid SPIR-V as
+glslc writes it for `mat4 m[2]`; 37 of 270 modules spvbind accepted in one run of the Python driver were affected,
+and nothing else was. With the one-line fix in the patch, SPIRV-Reflect agrees with spvbind on every accepted module,
+and the structured target ran 100,000 modules with vectors, matrices, arrays and structs without a disagreement. It also found something about spvbind: its decoders recursed once per word, which
 under AddressSanitizer exceeded FuzzTest's 128 KiB stack limit on a 3 KB module. They now run iteratively, through
 `@[csimp]` twins that Lean checks against the originals (`Spvbind/Binary.lean`). The structured target ran 450,000
 modules in five minutes without a disagreement.

@@ -1,5 +1,5 @@
 diff --git a/spirv_reflect.c b/spirv_reflect.c
-index 3f1ae6b..b3f886a 100644
+index 3f1ae6b..f288c61 100644
 --- a/spirv_reflect.c
 +++ b/spirv_reflect.c
 @@ -695,16 +695,16 @@ static void DestroyParser(SpvReflectPrvParser* p_parser) {
@@ -73,7 +73,21 @@ index 3f1ae6b..b3f886a 100644
    SpvReflectResult result = SPV_REFLECT_RESULT_SUCCESS;
  
    if (p_node->member_count > 0) {
-@@ -5112,7 +5138,8 @@ void spvReflectDestroyShaderModule(SpvReflectShaderModule* p_module) {
+@@ -2065,10 +2091,11 @@ static SpvReflectResult ParseType(SpvReflectPrvParser* p_parser, SpvReflectPrvNo
+               result = SPV_REFLECT_RESULT_ERROR_SPIRV_INVALID_ID_REFERENCE;
+               SPV_REFLECT_ASSERT(false);
+             }
+-            // Parse next dimension or element type
++            // Parse next dimension or element type, with the member's decorations: a MatrixStride on the member
++            // applies to the matrices in the array
+             SpvReflectPrvNode* p_next_node = FindNode(p_parser, element_type_id);
+             if (IsNotNull(p_next_node)) {
+-              result = ParseType(p_parser, p_next_node, NULL, p_module, p_type);
++              result = ParseType(p_parser, p_next_node, p_struct_member_decorations, p_module, p_type);
+             }
+           } else {
+             result = SPV_REFLECT_RESULT_ERROR_SPIRV_INVALID_ID_REFERENCE;
+@@ -5112,7 +5139,8 @@ void spvReflectDestroyShaderModule(SpvReflectShaderModule* p_module) {
    // Entry points
    for (size_t i = 0; i < p_module->entry_point_count; ++i) {
      SpvReflectEntryPoint* p_entry = &p_module->entry_points[i];
