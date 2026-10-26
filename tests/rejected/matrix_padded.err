@@ -1,0 +1,1 @@
+member 0 of S: a column-major matrix of 2 columns of 3 components with MatrixStride 16; the stride must be the size of a column and both counts at least 2

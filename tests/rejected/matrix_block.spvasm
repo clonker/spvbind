@@ -1,0 +1,18 @@
+; A push constant variable whose type is a matrix, not a struct: no member decorations give it a layout.
+; target-env: vulkan1.3
+               OpCapability Shader
+               OpMemoryModel Logical GLSL450
+               OpEntryPoint GLCompute %main "main" %pc
+               OpExecutionMode %main LocalSize 1 1 1
+               OpName %pc ""
+       %void = OpTypeVoid
+         %fn = OpTypeFunction %void
+      %float = OpTypeFloat 32
+         %v2 = OpTypeVector %float 2
+       %mat2 = OpTypeMatrix %v2 2
+        %ptr = OpTypePointer PushConstant %mat2
+         %pc = OpVariable %ptr PushConstant
+       %main = OpFunction %void None %fn
+      %label = OpLabel
+               OpReturn
+               OpFunctionEnd

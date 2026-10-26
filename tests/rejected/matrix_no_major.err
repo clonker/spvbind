@@ -1,0 +1,1 @@
+member 0 of S: MatrixStride without exactly one of RowMajor and ColMajor, or one of those without MatrixStride

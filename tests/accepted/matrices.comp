@@ -1,0 +1,32 @@
+#version 460
+
+layout(local_size_x = 1) in;
+
+// Matrices whose MatrixStride is a column's (or, row_major, a row's) size, as arrays of columns (or rows) of scalars.
+struct Transform
+{
+    mat4 model;
+    mat3x2 uv;
+};
+
+layout(push_constant) uniform Matrices
+{
+    mat4 projection;
+    mat2 rotation;
+    dmat2 finer;
+    layout(row_major) mat4 view;
+    layout(row_major) mat2x3 skew;
+    Transform transform;
+    mat4 bones[2];
+};
+
+layout(set = 0, binding = 0) buffer Out
+{
+    uint words[];
+};
+
+void main()
+{
+    words[0] = uint(projection[1][2] + rotation[0][1] + float(finer[1][1]) + view[3][0] + skew[1][2] +
+        transform.uv[2][1] + bones[1][2][3]);
+}

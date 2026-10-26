@@ -16,6 +16,7 @@ def OpMemberName : UInt16 := 6
 def OpTypeInt : UInt16 := 21
 def OpTypeFloat : UInt16 := 22
 def OpTypeVector : UInt16 := 23
+def OpTypeMatrix : UInt16 := 24
 def OpTypeArray : UInt16 := 28
 def OpTypeStruct : UInt16 := 30
 def OpTypePointer : UInt16 := 32
@@ -26,23 +27,35 @@ def OpMemberDecorate : UInt16 := 72
 
 /-- The opcode enumerants of the instructions modelled by `Instruction`. -/
 def modelled : List UInt16 :=
-  [OpName, OpMemberName, OpTypeInt, OpTypeFloat, OpTypeVector, OpTypeArray, OpTypeStruct, OpTypePointer, OpConstant,
-   OpVariable, OpDecorate, OpMemberDecorate]
+  [OpName, OpMemberName, OpTypeInt, OpTypeFloat, OpTypeVector, OpTypeMatrix, OpTypeArray, OpTypeStruct, OpTypePointer,
+   OpConstant, OpVariable, OpDecorate, OpMemberDecorate]
 
 /-- Storage class enumerants (3.2.6, Storage Class). -/
 def PushConstant : Word := 9
 
 /-- Decoration enumerants (3.2.19, Decoration). -/
+def RowMajor : Word := 4
+def ColMajor : Word := 5
 def ArrayStride : Word := 6
+def MatrixStride : Word := 7
 def Offset : Word := 35
 
 /-- The decoration enumerants modelled by `Decoration`. -/
-def modelledDecorations : List Word := [ArrayStride, Offset]
+def modelledDecorations : List Word := [RowMajor, ColMajor, ArrayStride, MatrixStride, Offset]
 
 /-- 3.2.19 Decoration: those spvbind reads, with their extra operands, and every other decoration. -/
 inductive Decoration
+  /-- RowMajor: "Applies only to a member of a structure type. Only valid on a matrix or array whose most basic element
+  is a matrix. Indicates that components within a row are contiguous in memory." -/
+  | rowMajor
+  /-- ColMajor: likewise, "Indicates that components within a column are contiguous in memory." -/
+  | colMajor
   /-- ArrayStride: "Apply to an array type to specify the stride, in bytes, of the array's elements." -/
   | arrayStride (stride : Word)
+  /-- MatrixStride: "Applies only to a member of a structure type. Only valid on a matrix or array whose most basic
+  element is a matrix. Matrix Stride is an unsigned 32-bit integer specifying the stride of the rows in a
+  RowMajor-decorated matrix or columns in a ColMajor-decorated matrix." -/
+  | matrixStride (stride : Word)
   /-- Offset: "It dictates the byte offset of the member relative to the beginning of the structure." -/
   | offset (byteOffset : Word)
   /-- A decoration with any other enumerant, its extra operands as words. -/
@@ -50,7 +63,10 @@ inductive Decoration
 
 /-- The decoration's enumerant followed by its extra operands (3.2.19). -/
 def Decoration.words : Decoration → List Word
+  | .rowMajor => [RowMajor]
+  | .colMajor => [ColMajor]
   | .arrayStride stride => [ArrayStride, stride]
+  | .matrixStride stride => [MatrixStride, stride]
   | .offset byteOffset => [Offset, byteOffset]
   | .other enumerant operands _ => enumerant :: operands
 
@@ -76,6 +92,11 @@ inductive Instruction
   type. It must be a scalar type. Component Count is the number of components in the resulting type. It must be at
   least 2." -/
   | typeVector (result : Id) (componentType : Id) (componentCount : Word)
+  /-- OpTypeMatrix (3.3.6): "Declare a new matrix type. Column Type is the type of each column in the matrix. It must
+  be vector type. Column Count is the number of columns in the new matrix type. ... It must be at least 2. Matrix
+  columns are numbered consecutively, starting with 0. This is true independently of any Decorations describing the
+  memory layout of a matrix (e.g., RowMajor or MatrixStride)." -/
+  | typeMatrix (result : Id) (columnType : Id) (columnCount : Word)
   /-- OpTypeArray (3.3.6): "Declare a new array type: a dynamically-indexable ordered aggregate of elements all having
   the same type. Element Type is the type of each element in the array. ... Length is the number of elements in the
   array. It must be an <id> of a constant instruction of scalar integer type, with a value of at least 1." -/
@@ -103,6 +124,7 @@ def Instruction.enumerant : Instruction → UInt16
   | .typeInt .. => OpTypeInt
   | .typeFloat .. => OpTypeFloat
   | .typeVector .. => OpTypeVector
+  | .typeMatrix .. => OpTypeMatrix
   | .typeArray .. => OpTypeArray
   | .typeStruct .. => OpTypeStruct
   | .typePointer .. => OpTypePointer
@@ -119,6 +141,7 @@ def Instruction.operands : Instruction → List Word
   | .typeInt result width signedness => [result, width, signedness]
   | .typeFloat result width => [result, width]
   | .typeVector result componentType componentCount => [result, componentType, componentCount]
+  | .typeMatrix result columnType columnCount => [result, columnType, columnCount]
   | .typeArray result elementType length => [result, elementType, length]
   | .typeStruct result members => result :: members
   | .typePointer result storageClass type => [result, storageClass, type]

@@ -7,9 +7,9 @@ import Spvbind.Binary
 
 namespace Spvbind
 
-open Spec (Word Byte octets LiteralString ArrayStride Offset modelledDecorations Decoration OpName OpMemberName OpTypeInt
-  OpTypeFloat OpTypeVector OpTypeArray OpTypeStruct OpTypePointer OpConstant OpVariable OpDecorate OpMemberDecorate
-  modelled Instruction Module)
+open Spec (Word Byte octets LiteralString RowMajor ColMajor ArrayStride MatrixStride Offset modelledDecorations
+  Decoration OpName OpMemberName OpTypeInt OpTypeFloat OpTypeVector OpTypeMatrix OpTypeArray OpTypeStruct OpTypePointer
+  OpConstant OpVariable OpDecorate OpMemberDecorate modelled Instruction Module)
 
 /-- A literal string at the start of `ws`, and the words after it. The octets up to the first 0 are the string; the
 words it was read from must be exactly the string's words, which also checks the padding. -/
@@ -30,10 +30,22 @@ def decodeString (ws : List Word) : Except String (LiteralString × List Word) :
 def decodeDecoration : List Word → Except String Decoration
   | [] => .error "decoration without enumerant"
   | e :: ops =>
-    if e = ArrayStride then
+    if e = RowMajor then
+      match ops with
+      | [] => .ok .rowMajor
+      | _ => .error "RowMajor decoration with operands"
+    else if e = ColMajor then
+      match ops with
+      | [] => .ok .colMajor
+      | _ => .error "ColMajor decoration with operands"
+    else if e = ArrayStride then
       match ops with
       | [stride] => .ok (.arrayStride stride)
       | _ => .error "ArrayStride decoration without exactly one operand"
+    else if e = MatrixStride then
+      match ops with
+      | [stride] => .ok (.matrixStride stride)
+      | _ => .error "MatrixStride decoration without exactly one operand"
     else if e = Offset then
       match ops with
       | [byteOffset] => .ok (.offset byteOffset)
@@ -71,6 +83,10 @@ def decodeTypeFloat : List Word → Except String Instruction
 def decodeTypeVector : List Word → Except String Instruction
   | [result, componentType, componentCount] => .ok (.typeVector result componentType componentCount)
   | _ => .error "OpTypeVector without exactly three operands"
+
+def decodeTypeMatrix : List Word → Except String Instruction
+  | [result, columnType, columnCount] => .ok (.typeMatrix result columnType columnCount)
+  | _ => .error "OpTypeMatrix without exactly three operands"
 
 def decodeTypeArray : List Word → Except String Instruction
   | [result, elementType, length] => .ok (.typeArray result elementType length)
@@ -114,6 +130,7 @@ def decodeOperands (e : UInt16) (ops : List Word) : Except String Instruction :=
   else if e = OpTypeInt then decodeTypeInt ops
   else if e = OpTypeFloat then decodeTypeFloat ops
   else if e = OpTypeVector then decodeTypeVector ops
+  else if e = OpTypeMatrix then decodeTypeMatrix ops
   else if e = OpTypeArray then decodeTypeArray ops
   else if e = OpTypeStruct then decodeTypeStruct ops
   else if e = OpTypePointer then decodeTypePointer ops
