@@ -13,11 +13,11 @@ option(SPVBIND_FUZZTEST "Build spvbind_fuzz, the FuzzTest targets (fetches FuzzT
 set(FUZZTEST_SOURCE_DIR "" CACHE PATH "A checkout of FuzzTest; fetched from GitHub if empty")
 set(FUZZTEST_GIT_TAG "2026-06-29" CACHE STRING "The FuzzTest revision to fetch if FUZZTEST_SOURCE_DIR is empty")
 option(SPVBIND_FUZZ_PATCH_SPIRV_REFLECT
-    "Apply patches/spirv-reflect-known-crashes.patch to the fetched SPIRV-Reflect, so that fuzzing gets past the known crashes" OFF)
+    "Apply patches/spirv-reflect-known-bugs.patch to the fetched SPIRV-Reflect, so that fuzzing gets past the known crashes and wrong results" OFF)
 find_program(SPVBIND_GLSLC glslc DOC "To compile the seed shaders in tests/accepted")
 
 include(FetchContent)
-set(spirvReflectPatch "${CMAKE_CURRENT_SOURCE_DIR}/patches/spirv-reflect-known-crashes.patch")
+set(spirvReflectPatch "${CMAKE_CURRENT_SOURCE_DIR}/patches/spirv-reflect-known-bugs.patch")
 if(SPIRV_REFLECT_SOURCE_DIR)
     set(spirv_reflect_SOURCE_DIR "${SPIRV_REFLECT_SOURCE_DIR}")
     if(SPVBIND_FUZZ_PATCH_SPIRV_REFLECT)

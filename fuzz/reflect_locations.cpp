@@ -59,6 +59,29 @@ void dumpElement(Reflection& r, uint32_t var, const SpvReflectBlockVariable& mem
             r.text += std::to_string(offset + k * (width / 8)) + '\t' + kind + std::to_string(width) + '\n';
         }
         path.members.back() = name;
+    } else if ((flags & numeric) && (flags & SPV_REFLECT_TYPE_FLAG_MATRIX) &&
+               !(flags & (notScalar & ~(SPV_REFLECT_TYPE_FLAG_MATRIX | SPV_REFLECT_TYPE_FLAG_VECTOR)))) {
+        // A matrix: columns (or, RowMajor, rows) the stride apart, components the scalar's size apart; the path takes
+        // the column (or row) first, as spvbind does.
+        const auto& mat = member.numeric.matrix;
+        bool rowMajor = member.decoration_flags & SPV_REFLECT_DECORATION_ROW_MAJOR;
+        bool colMajor = member.decoration_flags & SPV_REFLECT_DECORATION_COLUMN_MAJOR;
+        std::string name = path.members.back();
+        if (rowMajor == colMajor) {
+            appendPath(r.text, path, var);
+            r.text += std::to_string(offset) + "\tunsupported matrix without exactly one of RowMajor and ColMajor\n";
+        } else {
+            uint32_t outer = rowMajor ? mat.row_count : mat.column_count;
+            uint32_t inner = rowMajor ? mat.column_count : mat.row_count;
+            for (uint32_t o = 0; o < outer; ++o)
+                for (uint32_t i = 0; i < inner; ++i) {
+                    path.members.back() = name + "[" + std::to_string(o) + "][" + std::to_string(i) + "]";
+                    appendPath(r.text, path, var);
+                    r.text += std::to_string(offset + o * mat.stride + i * (width / 8)) + '\t' + kind +
+                        std::to_string(width) + '\n';
+                }
+        }
+        path.members.back() = name;
     } else {
         char buffer[64];
         std::snprintf(buffer, sizeof buffer, "%u\tunsupported flags=0x%08x\n", offset, (unsigned)flags);

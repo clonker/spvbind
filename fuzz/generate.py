@@ -51,26 +51,62 @@ class Vector:
         return f'{prefix[(self.scalar.kind, self.scalar.width)]}vec{self.count}'
 
 
+@dataclass(frozen=True)
+class Matrix:
+    scalar: Scalar  # 'f' only: GLSL has no integer matrices
+    columns: int  # 2 to 4
+    rows: int  # 2 to 4
+    row_major: bool
+
+    @property
+    def glsl(self) -> str:
+        return f'{"d" if self.scalar.width == 64 else ""}mat{self.columns}x{self.rows}'
+
+    @property
+    def column(self) -> Vector:
+        """The column type, which SPIR-V declares the matrix with whatever its layout."""
+        return Vector(self.scalar, self.rows)
+
+    @property
+    def contiguous(self) -> Vector:
+        """The vector a MatrixStride spans: a column, or a row if RowMajor."""
+        return Vector(self.scalar, self.columns if self.row_major else self.rows)
+
+
 @dataclass
 class Struct:
     name: str
-    members: list[tuple[str, Scalar | Vector | Struct | Array]] = field(default_factory=list)
+    members: list[tuple[str, Scalar | Vector | Matrix | Struct | Array]] = field(default_factory=list)
 
 
 @dataclass(eq=False)
 class Array:
-    element: Scalar | Vector | Struct  # no arrays of arrays: SPIRV-Reflect keeps one stride for all dimensions
+    element: Scalar | Vector | Matrix | Struct  # no arrays of arrays: SPIRV-Reflect keeps one stride for all dimensions
     length: int
 
 
-Type = Scalar | Vector | Struct | Array
+Type = Scalar | Vector | Matrix | Struct | Array
 
 
 def declare(t: Type, name: str) -> str:
-    """A GLSL declaration of `name` with type `t`."""
+    """A GLSL declaration of `name` with type `t`, without layout qualifiers."""
     if isinstance(t, Array):
         return f'{declare(t.element, name)}[{t.length}]'
     return f'{t.name if isinstance(t, Struct) else t.glsl} {name}'
+
+
+def matrix_of(t: Type) -> Matrix | None:
+    """The matrix `t` is, or is an array of."""
+    if isinstance(t, Array):
+        return matrix_of(t.element)
+    return t if isinstance(t, Matrix) else None
+
+
+def matrix_stride(mat: Matrix, scalar_block: bool = False) -> int:
+    """The MatrixStride: the size of a column (or row) rounded up to its alignment, as std430 lays out the array of
+    vectors a matrix is equivalent to."""
+    align, size, _ = layout(mat.contiguous, scalar_block)
+    return align_up(size, align)
 
 # spvbind supports these; weights favour the common ones.
 SUPPORTED = [
@@ -107,6 +143,11 @@ def layout(t: Type, scalar_block: bool = False) -> tuple[int, int, list[int]]:
         # std430: a two-component vector is aligned to twice its component, three or four to four times.
         align = t.scalar.bytes if scalar_block else t.scalar.bytes * (2 if t.count == 2 else 4)
         return align, t.count * t.scalar.bytes, []
+    if isinstance(t, Matrix):
+        # An array of its columns, or rows: aligned like one, as many strides long.
+        align, _, _ = layout(t.contiguous, scalar_block)
+        count = t.rows if t.row_major else t.columns
+        return align, count * matrix_stride(t, scalar_block), []
     if isinstance(t, Array):
         # std430: the stride is the element's size rounded up to its alignment, and the array is aligned like it.
         align, size, _ = layout(t.element, scalar_block)
@@ -137,7 +178,7 @@ def structs_of(t: Type, out: list[Struct] | None = None) -> list[Struct]:
 def scalars_of(t: Type) -> set[Scalar]:
     if isinstance(t, Scalar):
         return {t}
-    if isinstance(t, Vector):
+    if isinstance(t, (Vector, Matrix)):
         return {t.scalar}
     if isinstance(t, Array):
         return scalars_of(t.element)
@@ -147,10 +188,22 @@ def scalars_of(t: Type) -> set[Scalar]:
 def vectors_of(t: Type) -> set[Vector]:
     if isinstance(t, Vector):
         return {t}
+    if isinstance(t, Matrix):
+        return {t.column}
     if isinstance(t, Array):
         return vectors_of(t.element)
     if isinstance(t, Struct) and t.members:
         return set().union(*(vectors_of(m) for _, m in t.members))
+    return set()
+
+
+def matrices_of(t: Type) -> set[Matrix]:
+    if isinstance(t, Matrix):
+        return {t}
+    if isinstance(t, Array):
+        return matrices_of(t.element)
+    if isinstance(t, Struct) and t.members:
+        return set().union(*(matrices_of(m) for _, m in t.members))
     return set()
 
 
@@ -173,6 +226,7 @@ class Config:
     max_members: int = 6
     p_struct: float = 0.3  # a member is a nested struct
     p_vector: float = 0.35  # otherwise, a member is a vector
+    p_matrix: float = 0.2  # or, before that, a matrix; row-major only in the block, where GLSL can say so
     p_array: float = 0.25  # a scalar, vector or struct member is an array of such
     p_reuse: float = 0.3  # a nested struct member reuses an existing struct type
     p_weird_name: float = 0.005  # a name from WEIRD_NAMES
@@ -201,6 +255,9 @@ def random_struct(rng: random.Random, cfg: Config, names: Names, existing: list[
             else:
                 member = random_struct(rng, cfg, names, existing, depth + 1, scalars)
                 existing.append(member)
+        elif rng.random() < cfg.p_matrix:
+            member = Matrix(rng.choice([Scalar('f', 32), Scalar('f', 32), Scalar('f', 64)]), rng.choice([2, 3, 4]),
+                            rng.choice([2, 3, 4]), depth == 1 and rng.random() < 0.3)
         elif rng.random() < cfg.p_vector:
             member = Vector(rng.choice(scalars), rng.choice([2, 3, 4]))
         else:
@@ -249,7 +306,11 @@ def to_glsl(block: Struct, rng: random.Random, cfg: Config) -> str:
         if rng.random() < cfg.p_gap:
             offset += a * rng.choice([1, 1, 2, 3, 4, 8])
         cursor = offset + size
-        qualifier = f'layout(offset = {offset}) ' if offset != natural or rng.random() < 0.1 else ''
+        qualifiers = [f'offset = {offset}'] if offset != natural or rng.random() < 0.1 else []
+        mat = matrix_of(m)
+        if mat and mat.row_major:
+            qualifiers.append('row_major')
+        qualifier = f'layout({", ".join(qualifiers)}) ' if qualifiers else ''
         lines.append(f'    {qualifier}{declare(m, name)};')
     lines.append('}' + (' pc;' if rng.random() < 0.5 else ';'))
     lines.append('layout(set = 0, binding = 0) buffer Out\n{\n    uint words[];\n};')
@@ -261,12 +322,12 @@ def to_glsl(block: Struct, rng: random.Random, cfg: Config) -> str:
 
 MAGIC = 0x07230203
 OP = dict(Source=3, Name=5, MemberName=6, MemoryModel=14, EntryPoint=15, ExecutionMode=16, Capability=17, TypeVoid=19,
-          TypeBool=20, TypeInt=21, TypeFloat=22, TypeVector=23, TypeArray=28, TypeStruct=30, TypePointer=32,
+          TypeBool=20, TypeInt=21, TypeFloat=22, TypeVector=23, TypeMatrix=24, TypeArray=28, TypeStruct=30, TypePointer=32,
           TypeFunction=33, Constant=43, Function=54, FunctionEnd=56, Variable=59, Decorate=71, MemberDecorate=72,
           Label=248, Return=253)
 CAP = dict(Shader=1, Float16=9, Float64=10, Int64=11, Int16=22, Int8=39, StoragePushConstant16=4435,
            StoragePushConstant8=4450)
-BLOCK, ARRAY_STRIDE, OFFSET = 2, 6, 35
+BLOCK, ROW_MAJOR, COL_MAJOR, ARRAY_STRIDE, MATRIX_STRIDE, OFFSET = 2, 4, 5, 6, 7, 35
 PUSH_CONSTANT, STORAGE_BUFFER = 9, 12
 
 
@@ -366,6 +427,13 @@ def to_spirv(block: Struct, rng: random.Random, cfg: Config) -> tuple[bytes, lis
     for v in sorted(vectors_of(block), key=lambda v: (v.scalar.kind, v.scalar.width, v.count)):
         vector_ids[v] = m.fresh()
         m.types.append(op(OP['TypeVector'], vector_ids[v], scalar_ids[v.scalar], v.count))
+    matrix_ids: dict[Matrix, int] = {}
+    for mat in sorted(matrices_of(block), key=lambda t: (t.scalar.width, t.columns, t.rows, t.row_major)):
+        key = Matrix(mat.scalar, mat.columns, mat.rows, False)  # the type is the same whatever the layout
+        if key not in matrix_ids:
+            matrix_ids[key] = m.fresh()
+            m.types.append(op(OP['TypeMatrix'], matrix_ids[key], vector_ids[mat.column], mat.columns))
+        matrix_ids[mat] = matrix_ids[key]
     arrays = arrays_of(block)
     length_ids: dict[int, int] = {}
     if arrays:
@@ -398,6 +466,8 @@ def to_spirv(block: Struct, rng: random.Random, cfg: Config) -> tuple[bytes, lis
             return scalar_ids[t]
         if isinstance(t, Vector):
             return vector_ids[t]
+        if isinstance(t, Matrix):
+            return matrix_ids[t]
         if isinstance(t, Struct):
             return struct_ids[id(t)]
         if id(t) not in array_ids:  # an array type, with its stride, right before the struct that uses it
@@ -426,6 +496,10 @@ def to_spirv(block: Struct, rng: random.Random, cfg: Config) -> tuple[bytes, lis
                 offset = (0xFFFFFFFF - rng.randint(0, 3) * 16) // a * a - (len(s.members) - index) * 16
             if not (index == 0 and s is block and choose('nameless member')):
                 m.debug.append(op(OP['MemberName'], sid, index, *literal(name)))
+            mat = matrix_of(t)
+            if mat:  # the member's own layout of its matrices, through any array
+                m.annotations.append(op(OP['MemberDecorate'], sid, index, MATRIX_STRIDE, matrix_stride(mat, scalar_layout)))
+                m.annotations.append(op(OP['MemberDecorate'], sid, index, ROW_MAJOR if mat.row_major else COL_MAJOR))
             if not (index == 0 and s is block and choose('member without Offset')):
                 m.annotations.append(op(OP['MemberDecorate'], sid, index, OFFSET, offset))
             if index == 0 and s is block and choose('two Offsets'):
