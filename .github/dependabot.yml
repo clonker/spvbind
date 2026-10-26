@@ -1,0 +1,10 @@
+# The commit pins of the actions, with their version comments; the other pins are moved by workflows/update-pins.yml.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ['*']
