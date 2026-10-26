@@ -44,6 +44,6 @@ jobs:
         run: tests/run.py
       - name: Spec/Instruction.lean against the SPIR-V grammar
         run: |
-          # SPIRV-Headers main as of 2026-10-02.
-          curl -sSfL -o spirv.core.grammar.json https://raw.githubusercontent.com/KhronosGroup/SPIRV-Headers/86f980c731e62ae4eaf383d320449d71687936bf/include/spirv/unified1/spirv.core.grammar.json
+          # SPIRV-Headers main as of 2026-10-21.
+          curl -sSfL -o spirv.core.grammar.json https://raw.githubusercontent.com/KhronosGroup/SPIRV-Headers/fbf86836a9b1966586faf7be7bb8a6440e156d62/include/spirv/unified1/spirv.core.grammar.json
           tests/grammar.py spirv.core.grammar.json
