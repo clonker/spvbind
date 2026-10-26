@@ -7,8 +7,8 @@ module, ask both where every scalar is, and compare. The subject here is [SPIRV-
 ## The format
 
 `spvbind --locations module.spv` prints one line per scalar, tab-separated: the variable's id; the struct names, member
-indices and member names along the path, each joined with `/`, a vector component as `[k]` after its member's name; the
-byte offset from the start of the block; the scalar as `i`, `u` or `f` and its width.
+indices and member names along the path, each joined with `/`, an array element or vector component as `[k]` after its
+member's name; the byte offset from the start of the block; the scalar as `i`, `u` or `f` and its width.
 
 ```
 22	Params	0	count	0	u32
@@ -17,9 +17,11 @@ byte offset from the start of the block; the scalar as `i`, `u` or `f` and its w
 22	Params/Range	2/1	range/hi	20	f32
 ```
 
-`reflect_locations.cpp` (and `reflect_dump`, its command line) prints the same from SPIRV-Reflect's `SpvReflectBlockVariable`s (`absolute_offset`, `numeric.scalar`,
-`type_description->type_name`). A member that is not a scalar or a struct prints as `unsupported`, so that a module
-spvbind accepts never agrees by accident. Any other library can be a subject by printing this format.
+`reflect_locations.cpp` (and `reflect_dump`, its command line) prints the same from SPIRV-Reflect's
+`SpvReflectBlockVariable`s: offsets summed from the relative `offset`s, with its `absolute_offset` checked against the
+sum where SPIRV-Reflect fills it in; `numeric` and `array` for the components and elements; `type_description->type_name`.
+A member of any other kind (a matrix, an array of arrays, a reference) prints as `unsupported`, so that a module spvbind
+accepts never agrees by accident. Any other library can be a subject by printing this format.
 
 ## Running
 
@@ -118,9 +120,10 @@ in offset order and aligned for C++, and only scalars and structs are supported.
 
 ## Generators
 
-- **glsl**: a random push constant interface (nested structs, every supported scalar and vectors of them, explicit
-  offsets with gaps, occasionally a name that spvbind must reject) as GLSL, compiled with `glslc --target-env=vulkan1.3`.
-  The realistic input; about 15 modules/s, bounded by glslc.
+- **glsl**: a random push constant interface (nested structs, every supported scalar, vectors of them, arrays of all
+  three, explicit offsets with gaps, occasionally a name that spvbind must reject) as GLSL, compiled with
+  `glslc --target-env=vulkan1.3`. The realistic input; about 15 modules/s, bounded by glslc. Arrays of `vec3` and of
+  structs with tail padding have padded strides, which spvbind rejects, so the oracle is silent on them.
 - **spirv**: the same interfaces written word by word, with what glslc never produces: random ids, shuffled names and
   decorations, gaps inside nested structs, the scalar block layout; and with probability `--exotic` each of: huge
   offsets, offsets out of member order, no `Block`, a nameless struct or member, a member without an Offset or with two,

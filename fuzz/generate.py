@@ -54,10 +54,23 @@ class Vector:
 @dataclass
 class Struct:
     name: str
-    members: list[tuple[str, Scalar | Vector | Struct]] = field(default_factory=list)
+    members: list[tuple[str, Scalar | Vector | Struct | Array]] = field(default_factory=list)
 
 
-Type = Scalar | Vector | Struct
+@dataclass(eq=False)
+class Array:
+    element: Scalar | Vector | Struct  # no arrays of arrays: SPIRV-Reflect keeps one stride for all dimensions
+    length: int
+
+
+Type = Scalar | Vector | Struct | Array
+
+
+def declare(t: Type, name: str) -> str:
+    """A GLSL declaration of `name` with type `t`."""
+    if isinstance(t, Array):
+        return f'{declare(t.element, name)}[{t.length}]'
+    return f'{t.name if isinstance(t, Struct) else t.glsl} {name}'
 
 # spvbind supports these; weights favour the common ones.
 SUPPORTED = [
@@ -94,6 +107,10 @@ def layout(t: Type, scalar_block: bool = False) -> tuple[int, int, list[int]]:
         # std430: a two-component vector is aligned to twice its component, three or four to four times.
         align = t.scalar.bytes if scalar_block else t.scalar.bytes * (2 if t.count == 2 else 4)
         return align, t.count * t.scalar.bytes, []
+    if isinstance(t, Array):
+        # std430: the stride is the element's size rounded up to its alignment, and the array is aligned like it.
+        align, size, _ = layout(t.element, scalar_block)
+        return align, t.length * align_up(size, align), []
     align, cursor, offsets = 1, 0, []
     for _, member in t.members:
         a, size, _ = layout(member, scalar_block)
@@ -107,6 +124,8 @@ def layout(t: Type, scalar_block: bool = False) -> tuple[int, int, list[int]]:
 def structs_of(t: Type, out: list[Struct] | None = None) -> list[Struct]:
     """The structs `t` uses, each once, each after the ones it uses."""
     out = [] if out is None else out
+    if isinstance(t, Array):
+        structs_of(t.element, out)
     if isinstance(t, Struct):
         for _, member in t.members:
             structs_of(member, out)
@@ -120,15 +139,32 @@ def scalars_of(t: Type) -> set[Scalar]:
         return {t}
     if isinstance(t, Vector):
         return {t.scalar}
+    if isinstance(t, Array):
+        return scalars_of(t.element)
     return set().union(*(scalars_of(m) for _, m in t.members)) if t.members else set()
 
 
 def vectors_of(t: Type) -> set[Vector]:
     if isinstance(t, Vector):
         return {t}
+    if isinstance(t, Array):
+        return vectors_of(t.element)
     if isinstance(t, Struct) and t.members:
         return set().union(*(vectors_of(m) for _, m in t.members))
     return set()
+
+
+def arrays_of(t: Type, out: list[Array] | None = None) -> list[Array]:
+    """The arrays `t` uses, each once, in the order they are needed."""
+    out = [] if out is None else out
+    if isinstance(t, Array):
+        if all(a is not t for a in out):
+            out.append(t)
+        arrays_of(t.element, out)
+    elif isinstance(t, Struct):
+        for _, m in t.members:
+            arrays_of(m, out)
+    return out
 
 
 @dataclass
@@ -137,6 +173,7 @@ class Config:
     max_members: int = 6
     p_struct: float = 0.3  # a member is a nested struct
     p_vector: float = 0.35  # otherwise, a member is a vector
+    p_array: float = 0.25  # a scalar, vector or struct member is an array of such
     p_reuse: float = 0.3  # a nested struct member reuses an existing struct type
     p_weird_name: float = 0.005  # a name from WEIRD_NAMES
     p_gap: float = 0.25  # a member gets an explicit offset with a gap before it
@@ -168,6 +205,8 @@ def random_struct(rng: random.Random, cfg: Config, names: Names, existing: list[
             member = Vector(rng.choice(scalars), rng.choice([2, 3, 4]))
         else:
             member = rng.choice(scalars)
+        if rng.random() < cfg.p_array:
+            member = Array(member, rng.choice([1, 2, 3, 4, 8]))
         s.members.append((names('m'), member))
     return s
 
@@ -198,7 +237,7 @@ def to_glsl(block: Struct, rng: random.Random, cfg: Config) -> str:
     lines.append('layout(local_size_x = 1) in;')
     for s in structs_of(block)[:-1]:
         lines.append(f'struct {s.name}\n{{')
-        lines += [f'    {m.name if isinstance(m, Struct) else m.glsl} {name};' for name, m in s.members]
+        lines += [f'    {declare(m, name)};' for name, m in s.members]
         lines.append('};')
     # Explicit offsets are only allowed on block members, where glslc requires them to be aligned and in order.
     _, _, offsets = layout(block)
@@ -211,7 +250,7 @@ def to_glsl(block: Struct, rng: random.Random, cfg: Config) -> str:
             offset += a * rng.choice([1, 1, 2, 3, 4, 8])
         cursor = offset + size
         qualifier = f'layout(offset = {offset}) ' if offset != natural or rng.random() < 0.1 else ''
-        lines.append(f'    {qualifier}{m.name if isinstance(m, Struct) else m.glsl} {name};')
+        lines.append(f'    {qualifier}{declare(m, name)};')
     lines.append('}' + (' pc;' if rng.random() < 0.5 else ';'))
     lines.append('layout(set = 0, binding = 0) buffer Out\n{\n    uint words[];\n};')
     lines.append('void main()\n{\n    words[0] = 1u;\n}')
@@ -227,7 +266,7 @@ OP = dict(Source=3, Name=5, MemberName=6, MemoryModel=14, EntryPoint=15, Executi
           Label=248, Return=253)
 CAP = dict(Shader=1, Float16=9, Float64=10, Int64=11, Int16=22, Int8=39, StoragePushConstant16=4435,
            StoragePushConstant8=4450)
-BLOCK, OFFSET = 2, 35
+BLOCK, ARRAY_STRIDE, OFFSET = 2, 6, 35
 PUSH_CONSTANT, STORAGE_BUFFER = 9, 12
 
 
@@ -327,6 +366,17 @@ def to_spirv(block: Struct, rng: random.Random, cfg: Config) -> tuple[bytes, lis
     for v in sorted(vectors_of(block), key=lambda v: (v.scalar.kind, v.scalar.width, v.count)):
         vector_ids[v] = m.fresh()
         m.types.append(op(OP['TypeVector'], vector_ids[v], scalar_ids[v.scalar], v.count))
+    arrays = arrays_of(block)
+    length_ids: dict[int, int] = {}
+    if arrays:
+        uint = Scalar('u', 32)
+        if uint not in scalar_ids:
+            scalar_ids[uint] = m.fresh()
+            m.types.append(op(OP['TypeInt'], scalar_ids[uint], 32, 0))
+        for n in sorted({a.length for a in arrays}):
+            length_ids[n] = m.fresh()
+            m.types.append(op(OP['Constant'], scalar_ids[uint], length_ids[n], n))
+    array_ids: dict[int, int] = {}
 
     huge = choose('huge offsets')
     unordered = choose('unordered offsets')
@@ -337,14 +387,30 @@ def to_spirv(block: Struct, rng: random.Random, cfg: Config) -> tuple[bytes, lis
     def placement(t: Type) -> tuple[int, int]:
         if isinstance(t, Struct):
             return placed[id(t)]
+        if isinstance(t, Array):
+            align, size = placement(t.element)
+            return align, t.length * align_up(size, align)
         align, size, _ = layout(t, scalar_layout)
         return align, size
+
+    def type_id(t: Type) -> int:
+        if isinstance(t, Scalar):
+            return scalar_ids[t]
+        if isinstance(t, Vector):
+            return vector_ids[t]
+        if isinstance(t, Struct):
+            return struct_ids[id(t)]
+        if id(t) not in array_ids:  # an array type, with its stride, right before the struct that uses it
+            array_ids[id(t)] = m.fresh()
+            align, size = placement(t.element)
+            m.types.append(op(OP['TypeArray'], array_ids[id(t)], type_id(t.element), length_ids[t.length]))
+            m.annotations.append(op(OP['Decorate'], array_ids[id(t)], ARRAY_STRIDE, align_up(size, align)))
+        return array_ids[id(t)]
 
     for s in structs_of(block):
         sid = m.fresh()
         struct_ids[id(s)] = sid
-        member_ids = [scalar_ids[t] if isinstance(t, Scalar) else vector_ids[t] if isinstance(t, Vector)
-                      else struct_ids[id(t)] for _, t in s.members]
+        member_ids = [type_id(t) for _, t in s.members]
         m.types.append(op(OP['TypeStruct'], sid, *member_ids))
         if not (s is block and choose('nameless struct')):
             m.debug.append(op(OP['Name'], sid, *literal(s.name)))
