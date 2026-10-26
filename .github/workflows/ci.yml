@@ -21,13 +21,16 @@ jobs:
       - name: Example from the committed module
         run: .lake/build/bin/spvbind examples/params.spv | diff -u examples/params.hpp -
       - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # 31.11.3
-      - name: glslc and spirv-as from nixpkgs
+      - name: glslc and spirv-as from cache.nixos.org
         # Ubuntu 24.04's spirv-tools (2025.1) predates SPV_KHR_bfloat16, which tests/rejected/fp_encoding.spvasm needs.
-        # nixos-unstable as of 2026-10-23: shaderc 2026.1, SPIRV-Tools v2026.4.
+        # shaderc.bin, spirv-tools.out of nixpkgs 3ec636362e1816bc2f0888fa0fa2c69f1bc9e504 (nixos-unstable, 2026-10-23);
+        # moved by update-pins.yml. nixpkgs numbers spirv-tools by Vulkan SDK release.
         run: |
-          nixpkgs=github:NixOS/nixpkgs/3ec636362e1816bc2f0888fa0fa2c69f1bc9e504
-          echo "$(nix build --no-link --print-out-paths "$nixpkgs#shaderc.bin")/bin" >> "$GITHUB_PATH"
-          echo "$(nix build --no-link --print-out-paths "$nixpkgs#spirv-tools.out")/bin" >> "$GITHUB_PATH"
+          for path in /nix/store/y0r53z2yqjzj1k524hgagg8k544k2frq-shaderc-2026.1-bin \
+                      /nix/store/z5hs3p3inrq3w8cv71jycz7l4y3ny5xk-spirv-tools-1.4.363.0; do
+            nix-store --realise "$path"
+            echo "$path/bin" >> "$GITHUB_PATH"
+          done
       - name: Example compiled with glslc
         run: |
           glslc --target-env=vulkan1.3 -o examples/params.spv examples/params.comp

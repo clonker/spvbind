@@ -1,0 +1,38 @@
+name: Update pins
+
+on:
+  schedule:
+    - cron: '17 6 * * 1'  # Mondays
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # 31.11.3
+      - name: Move the pins in ci.yml
+        run: |
+          .github/update-pins.py > "$RUNNER_TEMP/body.md"
+          cat "$RUNNER_TEMP/body.md"
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        id: pr
+        with:
+          branch: update-pins
+          title: Update pins
+          body-path: ${{ runner.temp }}/body.md
+          commit-message: update pins
+      - name: Run CI on the branch
+        # Pushes and pull requests made with the workflow's own token start no workflows; a dispatch does.
+        if: steps.pr.outputs.pull-request-operation == 'created' || steps.pr.outputs.pull-request-operation == 'updated'
+        run: gh workflow run ci.yml --ref update-pins
+        env:
+          GH_TOKEN: ${{ github.token }}
