@@ -112,9 +112,10 @@ FUZZ_TEST(Differential, OracleAgreesOnBytes).WithDomains(fuzztest::Arbitrary<std
 // most are valid SPIR-V that spvbind accepts; coverage then guides it to the layouts that matter.
 
 struct Member {
-    uint8_t kind;  // < 10: a scalar (kScalars); < 40: a vector of scalar (kind - 10) % 10 with 2 + (kind - 10) / 10
-                   // components; otherwise an earlier struct, by (kind - 40) % their number
-    uint8_t gap;   // extra alignments of padding before the member
+    uint8_t kind;    // < 10: a scalar (kScalars); < 40: a vector of scalar (kind - 10) % 10 with 2 + (kind - 10) / 10
+                     // components; otherwise an earlier struct, by (kind - 40) % their number
+    uint8_t gap;     // extra alignments of padding before the member
+    uint8_t length;  // 0: as is; otherwise an array of that many, with the std430 stride
 };
 struct StructDesc {
     std::vector<Member> members;
@@ -145,8 +146,8 @@ constexpr ScalarKind kScalars[10] = {{'f', 32}, {'f', 64}, {'i', 32}, {'u', 32},
 constexpr uint32_t kMagic = 0x07230203;
 enum Op : uint32_t {
     OpName = 5, OpMemberName = 6, OpMemoryModel = 14, OpEntryPoint = 15, OpExecutionMode = 16, OpCapability = 17,
-    OpTypeVoid = 19, OpTypeInt = 21, OpTypeFloat = 22, OpTypeVector = 23, OpTypeStruct = 30, OpTypePointer = 32,
-    OpTypeFunction = 33,
+    OpTypeVoid = 19, OpTypeInt = 21, OpTypeFloat = 22, OpTypeVector = 23, OpTypeArray = 28, OpTypeStruct = 30,
+    OpTypePointer = 32, OpTypeFunction = 33, OpConstant = 43,
     OpFunction = 54, OpFunctionEnd = 56, OpVariable = 59, OpDecorate = 71, OpMemberDecorate = 72, OpLabel = 248,
     OpReturn = 253,
 };
@@ -154,7 +155,8 @@ enum Capability : uint32_t {
     CapShader = 1, CapFloat64 = 10, CapInt64 = 11, CapInt16 = 22, CapInt8 = 39, CapStoragePushConstant16 = 4435,
     CapStoragePushConstant8 = 4450,
 };
-constexpr uint32_t kDecorationBlock = 2, kDecorationOffset = 35, kPushConstant = 9, kStorageBuffer = 12;
+constexpr uint32_t kDecorationBlock = 2, kDecorationArrayStride = 6, kDecorationOffset = 35, kPushConstant = 9,
+    kStorageBuffer = 12;
 
 using Words = std::vector<uint32_t>;
 
@@ -189,27 +191,36 @@ std::string encode(const Interface& interface) {
     auto fresh = [&] { ids.push_back(nextId); return nextId++; };
     const size_t nStructs = interface.structs.size();
     std::vector<uint32_t> scalarIds(10, 0), vectorIds(30, 0);  // vector slot v: scalar v % 10, 2 + v / 10 components
+    std::vector<uint32_t> lengthIds(256, 0);                     // the OpConstant of each array length used
     std::vector<uint32_t> structIds(nStructs);
     for (auto& s : structIds) s = fresh();
     uint32_t pointer = fresh(), variable = fresh(), main = fresh(), voidType = fresh(), fnType = fresh(), label = fresh();
     uint32_t other = fresh(), decoyPointer = fresh(), decoyVariable = fresh();
     // Resolve member kinds and collect the scalars and vectors used.
     enum Kind : uint8_t { kScalar, kVector, kStruct };
-    struct Resolved { Kind kind; uint32_t index; };  // a scalar kind, a vector slot, or a struct index
+    struct Resolved { Kind kind; uint32_t index; uint32_t length; uint32_t arrayId; };  // a scalar kind, a vector slot,
+                                                                                        // or a struct index
     std::vector<std::vector<Resolved>> resolved(nStructs);
     for (size_t i = 0; i < nStructs; ++i)
         for (const Member& m : interface.structs[i].members) {
-            if (m.kind >= 40 && i > 0) resolved[i].push_back({kStruct, (uint32_t)((m.kind - 40) % i)});
+            Resolved res{kScalar, 0, m.length, 0};
+            if (m.kind >= 40 && i > 0) res = {kStruct, (uint32_t)((m.kind - 40) % i), m.length, 0};
             else if (m.kind >= 10 && m.kind < 40) {
                 uint32_t v = m.kind - 10;
-                resolved[i].push_back({kVector, v});
+                res = {kVector, v, m.length, 0};
                 if (!scalarIds[v % 10]) scalarIds[v % 10] = fresh();
                 if (!vectorIds[v]) vectorIds[v] = fresh();
             } else {
                 uint32_t k = m.kind % 10;
-                resolved[i].push_back({kScalar, k});
+                res = {kScalar, k, m.length, 0};
                 if (!scalarIds[k]) scalarIds[k] = fresh();
             }
+            if (m.length) {
+                if (!scalarIds[3]) scalarIds[3] = fresh();  // the lengths' type, a 32-bit unsigned integer
+                if (!lengthIds[m.length]) lengthIds[m.length] = fresh();
+                res.arrayId = fresh();
+            }
+            resolved[i].push_back(res);
         }
     for (uint32_t i = 1; i < nextId; ++i) std::swap(ids[i - 1], ids[rng.next() % i]);  // shuffle 1..n
     auto id = [&](uint32_t sequential) { return ids[sequential - 1]; };
@@ -234,6 +245,8 @@ std::string encode(const Interface& interface) {
     }
     for (uint32_t v = 0; v < 30; ++v)
         if (vectorIds[v]) append(types, op(OpTypeVector, {id(vectorIds[v]), id(scalarIds[v % 10]), 2 + v / 10}));
+    for (uint32_t n = 1; n < 256; ++n)
+        if (lengthIds[n]) append(types, op(OpConstant, {id(scalarIds[3]), id(lengthIds[n]), n}));
     std::vector<std::pair<uint32_t, uint32_t>> placed(nStructs);  // (alignment, size) of each struct as laid out
     for (size_t i = 0; i < nStructs; ++i) {
         const bool isBlock = i + 1 == nStructs;
@@ -242,15 +255,24 @@ std::string encode(const Interface& interface) {
         std::vector<uint32_t> offsets;
         for (size_t j = 0; j < resolved[i].size(); ++j) {
             const Resolved& m = resolved[i][j];
-            uint32_t a, size;
-            if (m.kind == kStruct) { a = placed[m.index].first; size = placed[m.index].second; structOp.push_back(id(structIds[m.index])); }
+            uint32_t a, size, elementId;
+            if (m.kind == kStruct) { a = placed[m.index].first; size = placed[m.index].second; elementId = id(structIds[m.index]); }
             else if (m.kind == kVector) {
                 // std430: a two-component vector is aligned to twice its component, three or four to four times.
                 uint32_t component = kScalars[m.index % 10].width / 8, count = 2 + m.index / 10;
                 a = scalarLayout ? component : component * (count == 2 ? 2 : 4);
                 size = count * component;
-                structOp.push_back(id(vectorIds[m.index]));
-            } else { a = size = kScalars[m.index].width / 8; structOp.push_back(id(scalarIds[m.index])); }
+                elementId = id(vectorIds[m.index]);
+            } else { a = size = kScalars[m.index].width / 8; elementId = id(scalarIds[m.index]); }
+            if (m.length) {
+                // An array of the element: its std430 stride is the element's size rounded up to its alignment.
+                uint32_t stride = alignUp(size, a);
+                append(types, op(OpTypeArray, {id(m.arrayId), elementId, id(lengthIds[m.length])}));
+                annotationList.push_back(op(OpDecorate, {id(m.arrayId), kDecorationArrayStride, stride}));
+                size = m.length * stride;
+                elementId = id(m.arrayId);
+            }
+            structOp.push_back(elementId);
             uint32_t offset = alignUp(cursor, a) + a * interface.structs[i].members[j].gap;
             offsets.push_back(offset);
             cursor = offset + size;
@@ -332,7 +354,7 @@ std::string encode(const Interface& interface) {
 
 auto InterfaceDomain() {
     using namespace fuzztest;
-    auto member = StructOf<Member>(Arbitrary<uint8_t>(), InRange<uint8_t>(0, 8));
+    auto member = StructOf<Member>(Arbitrary<uint8_t>(), InRange<uint8_t>(0, 8), InRange<uint8_t>(0, 6));
     auto structDesc = StructOf<StructDesc>(VectorOf(member).WithMinSize(1).WithMaxSize(8));
     return StructOf<Interface>(VectorOf(structDesc).WithMinSize(1).WithMaxSize(6), Arbitrary<uint8_t>(),
                                Arbitrary<uint16_t>());
@@ -341,10 +363,13 @@ auto InterfaceDomain() {
 void OracleAgreesOnInterfaces(const Interface& interface) { check(encode(interface), /*rejectionFails=*/true); }
 FUZZ_TEST(Differential, OracleAgreesOnInterfaces).WithDomains(InterfaceDomain());
 
-// The encoder itself: with the plain flags, every interface is a module spvbind accepts.
+// The encoder itself: with the plain flags and no arrays (a `vec3[N]` has a padded stride, which spvbind rejects),
+// every interface is a module spvbind accepts.
 void PlainInterfacesAreAccepted(const Interface& interface) {
     Interface plain = interface;
     plain.flags &= (uint8_t)(kFlagAnonymous | kFlagSecondVariable | kFlagDecoy | kFlagShuffle);
+    for (auto& s : plain.structs)
+        for (auto& m : s.members) m.length = 0;
     std::string module = encode(plain);
     std::string oracle = oracleLocations(module.data(), module.size());
     EXPECT_FALSE(oracleRejected(oracle)) << oracle;
