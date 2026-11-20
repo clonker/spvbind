@@ -92,9 +92,19 @@ lake build                                        # the executable and all proof
 
 The module must be compiled without optimization (`glslc` without `-O`), which would remove the names, and be SPIR-V
 1.4 or later (`--target-env=vulkan1.2` or later). For now only push constant blocks of integers, floats, vectors,
-arrays whose stride is their element's size, matrices whose MatrixStride is a column's (or, row-major, a row's) size
-(all as `std::array`, indexed in memory order) and nested structs are supported, with members in offset order; anything
-else, a `vec3[N]` or `mat3` with their padded strides for one, is rejected with a message naming the member.
+arrays, matrices (all as `std::array`, indexed in memory order) and nested structs are supported, with members in
+offset order; anything else, a `float16_t` or a buffer reference for one, is rejected with a message naming the member.
+
+Where the elements of an array are further apart than their size, as the `vec3`s of a `vec3[N]` and the columns of a
+`mat3` are in std430 (12 bytes, 16 apart), and every array element in std140, each element is a
+`spvbind::Padded<T, N>`, which the header defines: the element as `value`, followed by `N` bytes of padding.
+
+```cpp
+std::array<spvbind::Padded<std::array<float, 3>, 4>, 2> points;  // vec3 points[2];
+std::array<spvbind::Padded<std::array<float, 3>, 4>, 3> basis;   // mat3 basis;
+```
+
+So `points[i]` in GLSL is `points[i].value` in C++, and `basis[column][row]` is `basis[column].value[row]`.
 
 ## Tests
 

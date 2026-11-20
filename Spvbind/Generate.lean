@@ -162,9 +162,17 @@ def vector (types : Types) (componentType : Id) (count : Word) (layout : Option 
     | .error e => .error s!"vector component: {e}"
   | none => .error "a vector of a type spvbind does not support"
 
+/-- `element` as the element of an array whose elements are `stride` bytes apart: itself, if the stride is its C++
+size; followed by explicit padding, if the stride is larger and a multiple of its C++ alignment, to which C++ rounds
+the size of the padded element up; nothing, if the stride is smaller, where the elements would overlap. -/
+def withStride (element : Ty) (stride : Nat) : Option Ty :=
+  if stride = element.size then some element
+  else if element.size < stride ∧ stride % element.align = 0 then some (.padded element (stride - element.size))
+  else none
+
 /-- A matrix type, in C++ an array of its columns (ColMajor) or of its rows (RowMajor), each an array of the scalar,
-if the member's MatrixStride is the size of a column or row; a larger stride would need padding, which is not
-supported yet. Outside a member with MatrixStride and RowMajor or ColMajor a matrix has no layout. -/
+followed by padding if the member's MatrixStride is larger than a column or row. Outside a member with MatrixStride
+and RowMajor or ColMajor a matrix has no layout. -/
 def matrix (ctx : Context) (types : Types) (columnType : Id) (columns : Word) (layout : Option MatrixLayout) :
     Except String Ty :=
   match layout with
@@ -178,30 +186,33 @@ def matrix (ctx : Context) (types : Types) (columnType : Id) (columns : Word) (l
       | some f =>
         match f layout with
         | .ok (.scalar s) =>
-          if rowMajor then
-            if 2 ≤ columns ∧ 2 ≤ rows ∧ stride.toNat = columns.toNat * s.bytes then
-              .ok (.array (.array (.scalar s) columns.toNat) rows.toNat)
-            else .error s!"a row-major matrix of {rows} rows of {columns} components with MatrixStride {stride}; the \
-              stride must be the size of a row and both counts at least 2"
-          else
-            if 2 ≤ columns ∧ 2 ≤ rows ∧ stride.toNat = rows.toNat * s.bytes then
-              .ok (.array (.array (.scalar s) rows.toNat) columns.toNat)
-            else .error s!"a column-major matrix of {columns} columns of {rows} components with MatrixStride {stride}; \
-              the stride must be the size of a column and both counts at least 2"
+          if 2 ≤ columns ∧ 2 ≤ rows then
+            if rowMajor then
+              match withStride (.array (.scalar s) columns.toNat) stride.toNat with
+              | some row => .ok (.array row rows.toNat)
+              | none => .error s!"a row-major matrix of {rows} rows of {columns} components with MatrixStride \
+                {stride}; the stride must be at least the size of a row and a multiple of the size of a component"
+            else
+              match withStride (.array (.scalar s) rows.toNat) stride.toNat with
+              | some column => .ok (.array column columns.toNat)
+              | none => .error s!"a column-major matrix of {columns} columns of {rows} components with MatrixStride \
+                {stride}; the stride must be at least the size of a column and a multiple of the size of a component"
+          else .error s!"a matrix of {columns} columns of {rows} components; both counts must be at least 2"
         | .ok _ => .error "a matrix whose component type is not a scalar"
         | .error e => .error s!"matrix component: {e}"
 
-/-- An array type, in C++ a `std::array` of its element type, if its ArrayStride is the element's C++ size and its
-Length a constant of at least 1. A larger stride would need a padded element type, which is not supported yet. -/
+/-- An array type, in C++ a `std::array` of its element type, followed by padding if the ArrayStride is larger than
+the element's C++ size; its Length must be a constant of at least 1. -/
 def array (ctx : Context) (types : Types) (type elementType length : Id) (layout : Option MatrixLayout) :
     Except String Ty :=
   match types[elementType]?, ctx.constants[length]?, ctx.strides[type]? with
   | some f, some n, some stride =>
     match f layout with
     | .ok e =>
-      if stride.toNat = e.size ∧ 0 < n then .ok (.array e n)
-      else .error s!"an array of {n} elements with stride {stride} whose elements have C++ size {e.size}; the stride \
-        must be the size and the length at least 1"
+      match withStride e stride.toNat with
+      | some element => if 0 < n then .ok (.array element n) else .error "an array of 0 elements"
+      | none => .error s!"an array with ArrayStride {stride} whose elements have C++ size {e.size} and alignment \
+        {e.align}; the stride must be at least the size and a multiple of the alignment"
     | .error e => .error s!"array element: {e}"
   | none, _, _ => .error "an array of a type spvbind does not support"
   | some _, none, _ => .error "an array whose length is not a constant"

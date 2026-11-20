@@ -393,11 +393,31 @@ theorem locations_struct {m : Module} {ctx : Context} {types : Types} {t : Id} {
   simp only [Ty.locations, locations_members hf hc hname all 0 0 ms (List.drop_zero) hms l,
     located_of_typeStruct hf.results hs layout l, Nat.zero_le, true_and]
 
-/-- The scalars of an array of arrays of a scalar: the only shape matrices take. -/
-theorem mem_locations_array_array (s : Spec.Scalar) (inner outer : Nat) (l : Location) :
-    l ∈ (Ty.array (Ty.array (.scalar s) inner) outer).locations ↔
-      ∃ o i, o < outer ∧ i < inner ∧ l = ⟨[.element o, .element i], o * (inner * s.bytes) + i * s.bytes, s⟩ := by
-  simp only [Ty.locations, Ty.size, List.mem_flatMap, List.mem_range, List.mem_map, List.mem_singleton]
+/-- An element given a stride is that many bytes long, padding included, and has the scalars of the element where
+the element has them. -/
+theorem withStride_eq_some {e e' : Ty} {stride : Nat} (h : withStride e stride = some e') :
+    e'.size = stride ∧ e'.locations = e.locations := by
+  unfold withStride at h
+  split at h
+  · rename_i hs
+    cases h
+    exact ⟨hs.symm, rfl⟩
+  split at h
+  · rename_i hok
+    cases h
+    refine ⟨?_, by simp only [Ty.locations]⟩
+    simp only [Ty.size]
+    rw [Nat.add_sub_cancel' (Nat.le_of_lt hok.1)]
+    simp [alignUp, hok.2]
+  · cases h
+
+/-- The scalars of an array of elements `stride` bytes long that each have the scalars of an array of a scalar: the
+only shape matrices take. -/
+theorem mem_locations_array_array {s : Spec.Scalar} {inner stride : Nat} {e : Ty}
+    (hl : e.locations = (Ty.array (.scalar s) inner).locations) (hs : e.size = stride) (outer : Nat) (l : Location) :
+    l ∈ (Ty.array e outer).locations ↔
+      ∃ o i, o < outer ∧ i < inner ∧ l = ⟨[.element o, .element i], o * stride + i * s.bytes, s⟩ := by
+  simp only [Ty.locations, hl, hs, Ty.size, List.mem_flatMap, List.mem_range, List.mem_map, List.mem_singleton]
   constructor
   · rintro ⟨o, ho, l', ⟨i, hi, l'', rfl, rfl⟩, rfl⟩
     exact ⟨o, i, ho, hi, by simp⟩
@@ -495,9 +515,12 @@ theorem correct_addType {m : Module} {ctx : Context} {types : Types} {i : Instru
       split at hfc
       case h_1 e hge =>
         split at hfc
+        case h_2 => cases hfc
+        rename_i padded hws
+        split at hfc
         case isFalse => cases hfc
-        rename_i hok
         cases hfc
+        obtain ⟨hsz, hloc⟩ := withStride_eq_some hws
         have hcn : ∀ lt value more, .constant lt len value more ∈ m.instructions → Spec.wordsValue value more = n := by
           intro lt value more hm
           have := (hf.constants len _).mpr ⟨lt, value, more, hm, rfl⟩
@@ -512,15 +535,14 @@ theorem correct_addType {m : Module} {ctx : Context} {types : Types} {i : Instru
           rfl
         obtain ⟨lt, value, more, hm, hv⟩ := (hf.constants len n).mp hlen
         have hsm := (hf.strides r stride).mp hstride
-        simp only [Ty.locations, List.mem_flatMap, List.mem_range, List.mem_map]
+        simp only [Ty.locations, hloc, hsz, List.mem_flatMap, List.mem_range, List.mem_map]
         constructor
         · rintro ⟨i, hi, l', hl', rfl⟩
-          exact ⟨i, lt, value, stride, more, l', hm, hv ▸ hi, hsm, (hc et g hg layout e hge l').mp hl',
-            by rw [hok.1]⟩
+          exact ⟨i, lt, value, stride, more, l', hm, hv ▸ hi, hsm, (hc et g hg layout e hge l').mp hl', rfl⟩
         · rintro ⟨i, lt', value', stride', more', l', hm', hi, hsm', hl', rfl⟩
           rw [hcn lt' value' more' hm'] at hi
           rw [hsn stride' hsm']
-          exact ⟨i, hi, l', (hc et g hg layout e hge l').mpr hl', by rw [hok.1]⟩
+          exact ⟨i, hi, l', (hc et g hg layout e hge l').mpr hl', rfl⟩
       all_goals cases hfc
     all_goals cases hfc
   case typeMatrix r ct n =>
@@ -555,50 +577,52 @@ theorem correct_addType {m : Module} {ctx : Context} {types : Types} {i : Instru
       have hn := n.toNat_lt
       have hr := rows.toNat_lt
       split at hfc
+      case isFalse => cases hfc
+      split at hfc
       · -- row-major: rows of columns
         rename_i hrm
         subst hrm
         split at hfc
-        case isFalse => cases hfc
-        rename_i hok
+        case h_2 => cases hfc
+        rename_i padded hws
         cases hfc
-        rw [mem_locations_array_array]
+        obtain ⟨hsz, hloc⟩ := withStride_eq_some hws
+        rw [mem_locations_array_array hloc hsz]
         constructor
         · rintro ⟨o, i, ho, hi, rfl⟩
           refine ⟨componentType, rows, i.toUInt32, o.toUInt32, stride, s, hv,
             UInt32.lt_iff_toNat_lt.mpr (by rw [toNat_toUInt32 (by omega)]; exact hi),
             UInt32.lt_iff_toNat_lt.mpr (by rw [toNat_toUInt32 (by omega)]; exact ho), (hs s).mpr rfl, .inr ⟨rfl, ?_⟩⟩
-          rw [toNat_toUInt32 (by omega), toNat_toUInt32 (by omega), hok.2.2]
+          rw [toNat_toUInt32 (by omega), toNat_toUInt32 (by omega)]
         · rintro ⟨ct', rows', column, row, stride', s', hv', hcol, hrow, hs', ⟨h1, rfl⟩ | ⟨h1, rfl⟩⟩
           · cases h1
           · obtain ⟨rfl, rfl⟩ := hvu ct' rows' hv'
             cases (hs s').mp hs'
             simp only [Option.some.injEq, MatrixLayout.mk.injEq, and_true] at h1
             subst h1
-            exact ⟨row.toNat, column.toNat, UInt32.lt_iff_toNat_lt.mp hrow, UInt32.lt_iff_toNat_lt.mp hcol,
-              by rw [hok.2.2]⟩
+            exact ⟨row.toNat, column.toNat, UInt32.lt_iff_toNat_lt.mp hrow, UInt32.lt_iff_toNat_lt.mp hcol, rfl⟩
       · -- column-major: columns of rows
         rename_i hrm
         simp only [Bool.not_eq_true] at hrm
         subst hrm
         split at hfc
-        case isFalse => cases hfc
-        rename_i hok
+        case h_2 => cases hfc
+        rename_i padded hws
         cases hfc
-        rw [mem_locations_array_array]
+        obtain ⟨hsz, hloc⟩ := withStride_eq_some hws
+        rw [mem_locations_array_array hloc hsz]
         constructor
         · rintro ⟨o, i, ho, hi, rfl⟩
           refine ⟨componentType, rows, o.toUInt32, i.toUInt32, stride, s, hv,
             UInt32.lt_iff_toNat_lt.mpr (by rw [toNat_toUInt32 (by omega)]; exact ho),
             UInt32.lt_iff_toNat_lt.mpr (by rw [toNat_toUInt32 (by omega)]; exact hi), (hs s).mpr rfl, .inl ⟨rfl, ?_⟩⟩
-          rw [toNat_toUInt32 (by omega), toNat_toUInt32 (by omega), hok.2.2]
+          rw [toNat_toUInt32 (by omega), toNat_toUInt32 (by omega)]
         · rintro ⟨ct', rows', column, row, stride', s', hv', hcol, hrow, hs', ⟨h1, rfl⟩ | ⟨h1, rfl⟩⟩
           · obtain ⟨rfl, rfl⟩ := hvu ct' rows' hv'
             cases (hs s').mp hs'
             simp only [Option.some.injEq, MatrixLayout.mk.injEq, and_true] at h1
             subst h1
-            exact ⟨column.toNat, row.toNat, UInt32.lt_iff_toNat_lt.mp hcol, UInt32.lt_iff_toNat_lt.mp hrow,
-              by rw [hok.2.2]⟩
+            exact ⟨column.toNat, row.toNat, UInt32.lt_iff_toNat_lt.mp hcol, UInt32.lt_iff_toNat_lt.mp hrow, rfl⟩
           · cases h1
     all_goals cases hfc
   all_goals exact hc t f ht layout c hfc l
