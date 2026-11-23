@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import collections
+import concurrent.futures
 import hashlib
 import os
 import pathlib
@@ -36,10 +37,27 @@ import generate  # noqa: E402
 
 ASAN_EXIT, UBSAN_EXIT = 99, 98
 
+# Modules are made and checked in batches of 16, 32, 64, ... up to 1024. Nothing in a batch depends on a result, so one
+# glslc compiles all its GLSL (glslc takes 100 ms to start and under 1 ms per shader) and its modules go through the
+# tools on every core; a hang of the subject then costs its batch one timeout, however many of its modules hang.
+# Between batches the modules both tools agreed on join the corpus of the mutate mode, which is why the first batches
+# are small. The sizes do not depend on --jobs, so a seed gives the same modules and findings on every machine.
+FIRST_BATCH, LARGEST_BATCH = 16, 1024
+
 
 class Run:
     def __init__(self, rc: int, out: str, err: str, crashed: bool, timed_out: bool):
         self.rc, self.out, self.err, self.crashed, self.timed_out = rc, out, err, crashed, timed_out
+
+
+class Case:
+    """One generated module on its way through the tools."""
+
+    def __init__(self, mode: str):
+        self.info: dict[str, str] = {'mode': mode}  # its source, how it was made, what the tools printed
+        self.data: bytes | None = None              # the module; none if glslc rejected its source
+        self.oracle: Run | None = None
+        self.subject: Run | None = None
 
 
 def run(cmd: list[str], timeout: float) -> Run:
@@ -78,43 +96,64 @@ class Fuzzer:
 
     # --- One module -------------------------------------------------------------------------------------------------
 
-    def module(self, mode: str) -> tuple[bytes | None, dict[str, str]]:
-        """A module and what is known about it (source, how it was made)."""
-        info: dict[str, str] = {'mode': mode}
+    def module(self, mode: str) -> Case:
+        """A module and what is known about it (source, how it was made); in glsl mode its source, for `compile`. The
+        only step that draws random numbers, so it runs in order."""
+        case = Case(mode)
         if mode == 'glsl':
             block = generate.random_interface(self.rng, self.cfg, exotic_scalars=self.rng.random() < self.args.exotic)
-            source = generate.to_glsl(block, self.rng, self.cfg)
-            info['source.comp'] = source
-            src, spv = self.tmp / 'module.comp', self.tmp / 'module.spv'
-            src.write_text(source)
-            p = subprocess.run([self.args.glslc, f'--target-env={self.args.target_env}', '-o', str(spv), str(src)],
-                               capture_output=True, text=True)
-            if p.returncode != 0:
-                self.stats['glslc rejected the GLSL'] += 1
-                info['glslc.txt'] = p.stderr
-                self.rejections['glslc: ' + normalize_reason(p.stderr.splitlines()[0] if p.stderr else '')] += 1
-                return None, info
-            return spv.read_bytes(), info
-        if mode == 'spirv':
+            case.info['source.comp'] = generate.to_glsl(block, self.rng, self.cfg)
+        elif mode == 'spirv':
             block = generate.random_interface(self.rng, self.cfg, exotic_scalars=self.rng.random() < self.args.exotic)
-            data, exotic = generate.to_spirv(block, self.rng, self.cfg)
+            case.data, exotic = generate.to_spirv(block, self.rng, self.cfg)
             for e in exotic:
                 self.exotic[e] += 1
-            info['exotic'] = ', '.join(exotic)
-            return data, info
-        if mode == 'mutate':
-            if not self.corpus:
-                return None, info
-            data, done = generate.mutate(self.rng, self.rng.choice(self.corpus))
-            info['mutations'] = '; '.join(done)
-            return data, info
-        raise ValueError(mode)
+            case.info['exotic'] = ', '.join(exotic)
+        elif mode == 'mutate':
+            case.data, done = generate.mutate(self.rng, self.rng.choice(self.corpus))
+            case.info['mutations'] = '; '.join(done)
+        else:
+            raise ValueError(mode)
+        return case
 
-    def check(self, data: bytes, info: dict[str, str]) -> None:
-        spv = self.tmp / 'module.spv'
-        spv.write_bytes(data)
-        oracle = run([self.args.spvbind, '--locations', str(spv)], self.args.timeout)
-        subject = run([self.args.reflect, str(spv)], self.args.timeout)
+    def compile(self, work: pathlib.Path, batch: list[Case]) -> None:
+        """The GLSL of a batch, compiled by one glslc. A shader it leaves without a module is compiled again alone, for
+        diagnostics of its own."""
+        sources = [(work / f'{k}.comp', case) for k, case in enumerate(batch) if 'source.comp' in case.info]
+        if not sources:
+            return
+        for src, case in sources:
+            src.write_text(case.info['source.comp'])
+        target = f'--target-env={self.args.target_env}'
+        # With -c, each source becomes <source>.spv in the working directory, hence the absolute path of glslc.
+        glslc = os.path.abspath(shutil.which(self.args.glslc) or self.args.glslc)
+        subprocess.run([glslc, target, '-c'] + [src.name for src, _ in sources], cwd=work, capture_output=True)
+        for src, case in sources:
+            spv = work / (src.name + '.spv')
+            if not spv.exists():
+                p = subprocess.run([glslc, target, '-o', str(spv), str(src)], capture_output=True, text=True)
+                if p.returncode != 0:
+                    case.info['glslc.txt'] = p.stderr
+                    continue
+            case.data = spv.read_bytes()
+
+    def run_tools(self, job: tuple[pathlib.Path, Case]) -> None:
+        """Both tools on a module. Touches nothing but the case, so the cases of a batch run side by side."""
+        spv, case = job
+        if case.data is None:
+            return
+        spv.write_bytes(case.data)
+        case.oracle = run([self.args.spvbind, '--locations', str(spv)], self.args.timeout)
+        case.subject = run([self.args.reflect, str(spv)], self.args.timeout)
+
+    def check(self, case: Case) -> None:
+        """What the tools said about a module, against the properties; in order, like `module`."""
+        data, info, oracle, subject = case.data, case.info, case.oracle, case.subject
+        if data is None or oracle is None or subject is None:
+            self.stats['glslc rejected the GLSL'] += 1
+            stderr = info.get('glslc.txt', '')
+            self.rejections['glslc: ' + normalize_reason(stderr.splitlines()[0] if stderr else '')] += 1
+            return
         info['spvbind.txt'] = oracle.out + oracle.err
         info['reflect.txt'] = subject.out + subject.err
 
@@ -195,21 +234,33 @@ class Fuzzer:
     def loop(self) -> None:
         modes = self.args.mode
         started = time.time()
+        pool = concurrent.futures.ThreadPoolExecutor(self.args.jobs)  # threads: all they do is wait for the tools
         try:
-            for i in range(self.args.iterations):
-                mode = modes[i % len(modes)]
-                if mode == 'mutate' and not self.corpus:
-                    mode = 'spirv'
-                data, info = self.module(mode)
-                self.stats[f'generated: {mode}'] += 1
-                if data is not None:
-                    self.check(data, info)
-                if self.args.progress and (i + 1) % self.args.progress == 0:
-                    rate = (i + 1) / (time.time() - started)
-                    print(f'{i + 1} modules, {rate:.0f}/s, agree {self.stats["agree"]}, '
-                          f'spvbind rejected {self.stats["spvbind rejected"]}, '
-                          f'findings {sum(self.saved.values())}', file=sys.stderr)
+            done, size = 0, FIRST_BATCH
+            while done < self.args.iterations:
+                work = self.tmp / str(done)
+                work.mkdir()
+                batch = []
+                for i in range(done, min(done + size, self.args.iterations)):
+                    mode = modes[i % len(modes)]
+                    if mode == 'mutate' and not self.corpus:
+                        mode = 'spirv'
+                    batch.append(self.module(mode))
+                    self.stats[f'generated: {mode}'] += 1
+                self.compile(work, batch)
+                list(pool.map(self.run_tools, [(work / f'{k}.spv', case) for k, case in enumerate(batch)]))
+                for i, case in enumerate(batch, done):
+                    self.check(case)
+                    if self.args.progress and (i + 1) % self.args.progress == 0:
+                        rate = (i + 1) / (time.time() - started)
+                        print(f'{i + 1} modules, {rate:.0f}/s, agree {self.stats["agree"]}, '
+                              f'spvbind rejected {self.stats["spvbind rejected"]}, '
+                              f'findings {sum(self.saved.values())}', file=sys.stderr)
+                shutil.rmtree(work)
+                done += len(batch)
+                size = min(2 * size, LARGEST_BATCH)
         finally:
+            pool.shutdown(cancel_futures=True)
             shutil.rmtree(self.tmp, ignore_errors=True)
 
     def report(self) -> int:
@@ -251,7 +302,11 @@ def main() -> int:
                         help='directories of .spv files to mutate, besides the modules both tools agree on')
     parser.add_argument('--findings', default=str(here / 'findings'))
     parser.add_argument('--max-findings', type=int, default=20, help='per kind')
-    parser.add_argument('--timeout', type=float, default=20.0, help='seconds per tool run; longer is a hang')
+    parser.add_argument('--timeout', type=float, default=5.0,
+                        help='seconds per tool run; longer is a hang. The tools take milliseconds or, in a hang, hours')
+    parser.add_argument('-j', '--jobs', type=int, default=os.cpu_count() or 1,
+                        help='modules to run through the tools at a time; the cores, by default. Does not change '
+                             'what a seed generates')
     parser.add_argument('--target-env', default='vulkan1.3')
     parser.add_argument('--glslc', default='glslc')
     parser.add_argument('--spirv-val', default=shutil.which('spirv-val'), help='to classify findings; empty to skip')

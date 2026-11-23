@@ -2,8 +2,9 @@
 
 One module per class of finding from the first runs of `differential.py` and `spvbind_fuzz` against SPIRV-Reflect at
 commit `563dc9a` (2026-10-05, `main` at the time). Each is a `--corpus` seed for the mutate mode as well. Line numbers
-refer to `spirv_reflect.c` at that commit. None reported upstream yet. `../patches/spirv-reflect-known-bugs.patch`
-guards against the four crashes, so that fuzzing can go on past them.
+refer to `spirv_reflect.c` at that commit. The array-of-matrices stride is fixed upstream (`d1f2413`, #360); none of
+the others is reported yet. `../patches/spirv-reflect-known-bugs.patch` guards against the four crashes, so that
+fuzzing can go on past them.
 
 | Module                                 | spirv-val | What SPIRV-Reflect does                                                                                                                                                                                                                                                                                                                                                                      |
 |----------------------------------------|-----------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
